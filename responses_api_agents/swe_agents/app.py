@@ -3509,6 +3509,30 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
             params.resolved_agent_cls = selected.agent_cls
             params.resolved_diversify_tool_names = selected.diversify_tool_names
 
+        # Constraint injection at the SYSTEM PROMPT position (pivot-RL data
+        # prep, 2026-08-17). The persona system template is bind-mounted and
+        # rendered INSIDE the container by the agent framework, so
+        # per-instance Jinja variables can never reach it — instead, mount a
+        # per-episode copy of the selected template with the already-rendered
+        # constraint text appended. Rows opt in via metadata
+        # injection_position=system_prompt + constraint_instruction (written
+        # by agentic-if inject_constraints.py); all other rows are untouched.
+        constraint_instruction = params.problem_info.get("constraint_instruction")
+        if constraint_instruction and params.problem_info.get("injection_position") == "system_prompt":
+            if params.resolved_system_prompt_template is None:
+                raise ValueError(
+                    "injection_position=system_prompt requires a resolved system prompt "
+                    "template (agent_prompt_overrides); none is configured for this run"
+                )
+            patched_sp = params.persistent_dir / "system_prompt_with_constraint.j2"
+            patched_sp.write_text(
+                Path(params.resolved_system_prompt_template).read_text()
+                + "\n\n"
+                + str(constraint_instruction).strip()
+                + "\n"
+            )
+            params.resolved_system_prompt_template = patched_sp
+
         if params.problem_info["dataset_name"] == "nv-internal-1":
             dataset_processor = NVInternalDatasetProcessor(config=params)
         elif params.problem_info["dataset_name"] == "deepswe":
