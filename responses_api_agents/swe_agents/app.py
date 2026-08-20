@@ -3531,7 +3531,11 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
                 + str(constraint_instruction).strip()
                 + "\n"
             )
-            params.resolved_system_prompt_template = patched_sp
+            # str, not Path: the field is typed str and params round-trip
+            # through model_validate in runner_ray_remote (smoke-caught
+            # 2026-08-19: PosixPath failed string validation and killed the
+            # shard for every system_prompt-position row).
+            params.resolved_system_prompt_template = str(patched_sp)
 
         if params.problem_info["dataset_name"] == "nv-internal-1":
             dataset_processor = NVInternalDatasetProcessor(config=params)
