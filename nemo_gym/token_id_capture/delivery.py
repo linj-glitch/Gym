@@ -77,7 +77,9 @@ def _unusable(result: dict, error: str, message: str) -> dict:
     return {"rebuilt_response": None, MASK_SAMPLE_KEY: True, "error": error, "metrics": metrics}
 
 
-async def finalize_rollout_token_capture(result: dict, source: TokenSource | None) -> dict | None:
+async def finalize_rollout_token_capture(
+    result: dict, source: TokenSource | None, *, mask_multi_chain: bool = True
+) -> dict | None:
     """Rebuild one finished rollout record's ``response.output`` from its recorded token ids.
 
     Call this after the harness and verifier finish the record.
@@ -145,7 +147,9 @@ async def finalize_rollout_token_capture(result: dict, source: TokenSource | Non
 
     response = result.get("response") if isinstance(result.get("response"), dict) else {}
     try:
-        built = await trajectories_from_source(rollout_id, source, model=str(response.get("model") or ""))
+        built = await trajectories_from_source(
+            rollout_id, source, model=str(response.get("model") or ""), mask_multi_chain=mask_multi_chain
+        )
     except Exception as error:
         # A transport failure may be unrelated to this rollout.
         # Mask this rollout instead of failing the entire batch.

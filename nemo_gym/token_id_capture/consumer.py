@@ -96,6 +96,7 @@ def _assemble(
     entries: list[TokenEntry],
     builder: str,
     model: str,
+    mask_multi_chain: bool = True,
 ) -> dict:
     if builder == "per_request":
         # Single-response delivery cannot represent multiple trajectories.
@@ -152,7 +153,11 @@ def _assemble(
         "metrics": metrics,
         # A retry of the final call can leave two plausible generations.
         # Mask the rollout when the client-selected generation is unknown.
-        "mask_sample": bool(unresolved) or notes.roots != 1 or notes.chains != 1,
+        # Quarantined calls always mask; a clean multi-chain build masks only
+        # when mask_multi_chain (see TokenIdCaptureSettings).
+        "mask_sample": bool(unresolved)
+        or bool(out.quarantined)
+        or (mask_multi_chain and (notes.roots != 1 or notes.chains != 1)),
         "unresolved_retries": list(unresolved),
     }
 
@@ -198,6 +203,7 @@ async def trajectories_from_source(
     *,
     builder: str = "prefix_merging",
     model: str = "",
+    mask_multi_chain: bool = True,
 ) -> dict | None:
     """Build trajectories from a frozen ``TokenSource`` snapshot.
 
@@ -212,7 +218,9 @@ async def trajectories_from_source(
     if not snapshot.entries:
         built = _failed_build(rollout_id, builder, "capture contains no token records")
     else:
-        built = await asyncio.to_thread(_assemble, rollout_id, list(snapshot.entries), builder, model)
+        built = await asyncio.to_thread(
+            _assemble, rollout_id, list(snapshot.entries), builder, model, mask_multi_chain
+        )
     if snapshot.incomplete:
         built["mask_sample"] = True
         built.setdefault("metrics", {})["capture_incomplete"] = True

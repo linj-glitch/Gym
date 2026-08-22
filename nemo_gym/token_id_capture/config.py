@@ -105,6 +105,13 @@ class TokenIdCaptureSettings(BaseModel):
     # Finalization does not retire the frozen snapshot.
     # Durable delivery permits retirement by snapshot id and version.
     rebuild_response: bool = True
+    # Whether a multi-root/multi-chain capture masks the sample even when a
+    # clean main chain was delivered (no quarantine, no unresolved retries).
+    # True (default) is the strict upstream behavior. False trains on the
+    # main chain and reports the loss via delivered_fraction — for harnesses
+    # whose history rewrites (e.g. reasoning stripped from resent turns)
+    # split every multi-turn rollout into multiple roots.
+    mask_multi_chain: bool = True
     # Abort once enough finalized rollouts exceed this masked fraction.
     # ``None`` disables the limit.
     max_mask_fraction: float | None = None
