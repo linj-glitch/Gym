@@ -1,0 +1,53 @@
+# Training overlay for the agentic CudaGym environment.
+#
+# Adds `model_server` to `cuda_agent` and opts the agent into training-token
+# capture (`nemo_gym.token_id_capture`). OpenCode's model calls are routed to
+# `<model_server>/ng-rollout/<rollout_id>/training-token-capture/v1`
+# (`resolve_model_base_url`); the model server's capture middleware records
+# each call's exact prompt/generation token ids and log probs durably under
+# the rollout id, and rollout collection rebuilds the on-policy trajectory
+# into `response.output` at finalization (`finalize_rollout_token_capture`).
+# A rollout whose capture is missing or ambiguous is masked
+# (`mask_sample: true`), never silently trained on. Without this overlay
+# (eval), `cuda_agent` has no model_server and OpenCode talks directly to the
+# configured endpoint, with no token-id capture.
+#
+# Compose with the base agent config and the training model server. That model
+# server carries return_token_id_information: true and reads
+# policy_base_url / policy_api_key / policy_model_name, which NeMo-RL injects
+# from the training policy's vLLM servers:
+#   ng_run "+config_paths=[resources_servers/cudagym/configs/cudagym_cuda_agent.yaml,\
+#           resources_servers/cudagym/configs/cudagym_cuda_agent_training.yaml,\
+#           responses_api_models/vllm_model/configs/vllm_model_for_training.yaml]"
+
+# Run-level capture block (top-level Gym global config). The writer (the
+# vllm_model server) and the consumer (rollout collection) share this
+# directory; both run in the Gym server tree on the same node, so a
+# node-local path is correct. NeMo-RL can override via +token_id_capture_dir.
+token_id_capture:
+  enabled: true
+  dir: ${oc.select:token_id_capture_dir,/tmp/nemo_gym_token_id_capture}
+
+cudagym_cuda_agent:
+  responses_api_agents:
+    cuda_agent:
+      # Points at the `policy_model` app defined by vllm_model_for_training.yaml.
+      model_server:
+        type: responses_api_models
+        name: policy_model
+      # Opt this agent into training-token capture: OpenCode is an opaque
+      # external harness whose returned output has no token ids. The run-level
+      # `token_id_capture.enabled` block above gates the infrastructure; this
+      # flag scopes it to this agent.
+      token_id_capture: true
+      # Match production's sandbox layout for training rollouts (with the
+      # minimal sandbox_profile; the solswarm one runs real agent-image
+      # containers and needs no namespace): each
+      # rollout's private mount namespace shows cwd=/workspace and
+      # /tmp/problem, and hide_job_mounts blanks the job's bind mounts
+      # (datasets, checkpoints, models) plus the code tree; the cudagym CLI
+      # survives via a staged package copy on PYTHONPATH. Training-only:
+      # eval and rollout collection compose without this overlay. Degrades to
+      # a plain launch when `unshare` is unavailable.
+      mount_namespace: true
+      hide_job_mounts: true

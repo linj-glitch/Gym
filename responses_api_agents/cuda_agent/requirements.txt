@@ -1,0 +1,11 @@
+-e nemo-gym[dev] @ ../../
+# The CudaGym SDK. The agent imports `cudagym.rl` for the per-language kernel
+# filename and Markdown fence tag, and copies the `cudagym` package into each
+# sandbox so the agent can run the CLI (see _stage_cudagym_cli). The path is
+# relative to this directory because Gym's per-server venv setup runs
+# `uv pip install -r requirements.txt` from the server directory. It assumes the
+# NeMo-RL training layout, where Gym sits at 3rdparty/Gym-workspace/Gym and
+# cudagym is vendored at 3rdparty/solswarm/cudagym. In a standalone Gym checkout, install
+# cudagym into the server venv manually instead:
+#   pip install git+ssh://git@gitlab-master.nvidia.com:12051/atlas/solswarm.git#subdirectory=cudagym
+-e ../../../../solswarm/cudagym

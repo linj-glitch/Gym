@@ -1,0 +1,59 @@
+# SolSwarm-parity overlay for the agentic CudaGym environment: container mode
+# plus the real submission flow. Layer it after cudagym_cuda_agent.yaml and
+# alongside cudagym_cuda_agent_training.yaml (required: container mode needs
+# the model_server the registry catalog files dial):
+#
+#   ng_run "+config_paths=[resources_servers/cudagym/configs/cudagym_cuda_agent.yaml,\
+#           resources_servers/cudagym/configs/cudagym_cuda_agent_training.yaml,\
+#           resources_servers/cudagym/configs/cudagym_cuda_agent_solswarm.yaml,...]"
+#
+# Requires a solswarm checkout: set solswarm_surface.root in the base config,
+# or export SOLSWARM_SURFACE_ROOT (NeMo-RL's grpo.sh exports its
+# 3rdparty/solswarm submodule path). The monorepo materializes cudagym/
+# directly inside that checkout, so the kernel-factory-schemas skill's
+# references/ symlink resolves without any further initialization.
+#
+# What this overlay changes:
+#   * sandbox_profile: solswarm -- container mode. Each rollout runs SolSwarm's
+#     real docker/agent/entrypoint.sh inside an instance of the published agent
+#     image via the host's enroot runtime (extracted once per node; each
+#     rollout's `enroot start` latency is logged as "sandbox startup"). The
+#     entrypoint builds the sandbox and launches OpenCode with its own flags,
+#     so the base config's extra_args are unused here; it always passes
+#     --variant, which the base config's solswarm_reasoning_variant overrides.
+#     Requires, in the agent server's environment: `enroot` and `gawk` on PATH
+#     (the job script bind-mounts the host's enroot into the training
+#     container); CUDA_AGENT_ENROOT_IMAGE -> the agent-image squashfs (or set
+#     enroot_image on the agent; build it from the pinned solswarm checkout
+#     for the cluster's CPU architecture); optionally CUDA_AGENT_ENROOT_DATA
+#     -> a node-local extraction directory (default /tmp/cuda-agent-enroot).
+#   * submission_mode: solswarm_submit -- the sandbox gets SolSwarm's real
+#     submit skill pointed at the resources server's rollout-scoped /evaluate
+#     endpoint. Every submission is canonically evaluated and recorded
+#     server-side, and the best one is the reward (resources server
+#     reward_mode).
+
+cudagym:
+  resources_servers:
+    cudagym:
+      reward_mode: best_submission   # or final_submission
+      max_submissions: 8
+      # How long a rollout's registered submission state may live before the
+      # sweep reclaims it. A /verify arriving after expiry has nothing to
+      # score (with final_file_fallback false it reports the expiry and
+      # rewards 0). Size it to the whole COLLECTION window, not one rollout:
+      # every rollout in a step registers near the start of collection, and
+      # the last /verify lands only when the slowest rollout finishes (a 2h
+      # value silently zeroed a 3.6h 32-rollout step's 38 evaluated
+      # submissions).
+      submission_ttl_seconds: 28800.0
+      # Production-faithful: reward comes only from submitted kernels. A
+      # rollout that never submits scores 0, even if it left a kernel file
+      # behind (production's candidates pipeline has no such fallback).
+      final_file_fallback: false
+
+cudagym_cuda_agent:
+  responses_api_agents:
+    cuda_agent:
+      sandbox_profile: solswarm
+      submission_mode: solswarm_submit

@@ -1,0 +1,188 @@
+# Agentic CudaGym kernel-optimization environment. The OpenCode-based
+# `cuda_agent` writes and iterates on a kernel in a seeded sandbox; the
+# `cudagym` resources server scores the submitted kernel with the
+# correctness-gated reward (0 until correct on every workload, then the
+# correctness weight plus the SOL-score performance term).
+#
+# EVAL / rollout collection. OpenCode talks directly to an external endpoint;
+# without a model_server there is no token-id capture:
+#   ng_run "+config_paths=[resources_servers/cudagym/configs/cudagym_cuda_agent.yaml,\
+#           responses_api_models/openai_model/configs/openai_model.yaml]"
+#   ng_collect_rollouts +agent_name=cudagym_cuda_agent \
+#     +input_jsonl_fpath=resources_servers/cudagym/data/example.jsonl \
+#     +output_jsonl_fpath=cuda_rollout.jsonl +limit=2
+#
+# TRAINING (token-id capture). Add the training overlay and the capture-enabled
+# model server, so OpenCode is routed through
+# <model_server>/ng-rollout/<rollout_id>/training-token-capture/v1 and rollout
+# collection rebuilds the on-policy trajectory at finalization:
+#   ng_run "+config_paths=[resources_servers/cudagym/configs/cudagym_cuda_agent.yaml,\
+#           resources_servers/cudagym/configs/cudagym_cuda_agent_training.yaml,\
+#           responses_api_models/vllm_model/configs/vllm_model_for_training.yaml]"
+#   (NeMo-RL injects policy_base_url / policy_api_key / policy_model_name from
+#    the training policy's vLLM servers.)
+#
+# Requires the `cudagym` CLI + SDK installed (see requirements.txt), a
+# `cudagym_endpoints` entry per GPU the dataset targets (see below), and
+# CUDAGYM_AUTH_TOKEN for those endpoints. The agent installs `opencode` via npm
+# at startup if it is not already on PATH.
+
+cudagym:
+  resources_servers:
+    cudagym:
+      entrypoint: app.py
+      verified: false
+      domain: coding
+      description: CudaGym/KernelFactory kernel optimization, correctness-gated SOL-score reward
+      value: Improve open-model CUDA/Triton kernel writing in an OpenCode agent harness
+      # One evaluation endpoint per GPU this server scores on, keyed by the
+      # CudaGym SupportedHardware value; a row is evaluated on the endpoint
+      # for its own target_hardware and refused when there is none. An empty
+      # URL is resolved at runtime from CUDAGYM_UNIFIED_SERVER_URL /
+      # CUDAGYM_URL (in-allocation hosting). NeMo-RL injects this map from the
+      # recipe's env.cudagym entries; outside training set it explicitly, e.g.
+      # `+cudagym_endpoints='{B200: "https://b200.example.com"}'`.
+      endpoints: ${cudagym_endpoints}
+      # Fail fast, at an endpoint's first eval, if its /health reports a
+      # different GPU than the key it is filed under. A mismatch is otherwise
+      # silent for Triton kernels, which JIT-compile on whatever GPU answers.
+      verify_endpoint_sku: true
+      compilation_timeout: 300
+      execution_timeout_per_trial: 120
+      # Correctness-gated: an incorrect kernel earns 0 (compile/execute
+      # progress is reported as metrics only; a bare stub "compiles" in JIT
+      # languages). A correct one earns correctness + performance * SOL score
+      # (in [0, 1], from the row's anchors), so the range here is [0, 2].
+      reward_weights:
+        correctness: 1.0
+        performance: 1.0
+      perf_reward_config:
+        clip_max: 10.0
+        clip_min: 0.1
+        speedup_ratio: 0.75
+        # Rows without SOL anchors only: let a correct kernel earn the perf
+        # term from the log-normalized speedup over the timed reference.
+        # Needs benchmark_config {benchmark_reference: true} (below);
+        # otherwise anchor-less rows earn the correctness weight alone.
+        allow_speedup_fallback: true
+      # CudaGym EvalConfig overrides; empty by default (anchored rows need
+      # none). Rows without anchors need `{benchmark_reference: true}` so the
+      # speedup fallback has a timed reference — one extra timed run per
+      # workload. NeMo-RL sets it per recipe via cudagym_benchmark_config.
+      benchmark_config: ${oc.select:cudagym_benchmark_config,{}}
+
+cudagym_cuda_agent:
+  responses_api_agents:
+    cuda_agent:
+      entrypoint: app.py
+      resources_server:
+        type: resources_servers
+        name: cudagym
+      concurrency: 8
+      command: opencode
+      # <provider>/<model>; the provider is defined in opencode_config below.
+      model: nvinf/nvidia/qwen/qwen3-next-80b-a3b-instruct
+      # Matches solswarm production's Dockerfile.agent pin (opencode-ai@1.17.9).
+      # The pin applies to fresh installs only: ensure_opencode keeps an
+      # opencode that is already on PATH and warns loudly when its version
+      # differs from this pin.
+      opencode_version: 1.17.9
+      thinking: true
+      # Wall-clock budget in seconds for one opencode session. On expiry the
+      # agent sends SIGTERM, then SIGKILL after 30s, matching solswarm's
+      # `timeout --signal=TERM --kill-after=30s`. 3600 matches production's
+      # SOLSWARM_MAX_DURATION default. In container mode (the solswarm overlay)
+      # the same value is exported as SOLSWARM_MAX_DURATION, so the entrypoint
+      # and the prompts budget against the same number.
+      timeout: 3600
+      # Minimal-profile knobs (container mode needs neither — the agent image
+      # supplies the whole filesystem): mount_namespace runs each rollout in a
+      # private mount namespace showing production's paths (cwd=/workspace,
+      # problem at /tmp/problem); degrades to a plain launch without
+      # `unshare`. hide_job_mounts additionally blanks the job's bind mounts
+      # and /opt/nemo-rl (the cudagym CLI survives via a staged package copy
+      # on PYTHONPATH).
+      mount_namespace: false
+      hide_job_mounts: false
+      # The mode-selecting keys, at their defaults: the minimal profile (bare
+      # problem/ sandbox, our own `opencode run` invocation) scoring the final
+      # kernel file. The solswarm overlay switches both to container mode with
+      # the real /submit flow.
+      sandbox_profile: minimal
+      submission_mode: final_file
+      # The same endpoint map the resources server gets, for the other half of
+      # the routing: each rollout's sandbox is given the endpoint for its own
+      # row's target_hardware as CUDAGYM_URL, so the model's in-sandbox
+      # `cudagym evaluate` measures on the GPU its kernel is scored on. An empty
+      # map sends every row to CUDAGYM_UNIFIED_SERVER_URL.
+      cudagym_endpoints: ${cudagym_endpoints}
+      # Agent-image squashfs for container mode; null -> env CUDA_AGENT_ENROOT_IMAGE.
+      enroot_image: null
+      # Extra text appended to the minimal profile's sandbox-contract prompt.
+      sandbox_instructions: null
+      # --variant value for container mode; "" keeps the entrypoint's default.
+      solswarm_reasoning_variant: ""
+      # SolSwarm checkout used for the stitched problem extras and, in the
+      # minimal profile with /submit, the staged skills.
+      solswarm_surface:
+        root: null                # -> env SOLSWARM_SURFACE_ROOT
+        ban_framework_kernels: true
+        ban_cuda_graphs: true
+        banned_libraries: []
+      # Passed to the agent subprocess as OPENAI_API_KEY / OPENAI_BASE_URL when
+      # set; the policy endpoint here is configured via opencode_config instead.
+      openai_api_key: ""
+      openai_base_url: null
+      # Extra environment variables for the agent subprocess.
+      env: {}
+      # workspace_root (per-rollout sandboxes) is deliberately not set: it
+      # defaults to <system temp dir>/nemo_gym_cuda_agent, outside the repo
+      # tree, because OpenCode discovers skills and instruction files by
+      # walking up from the workspace.
+      # --title: a fixed session title stops OpenCode from LLM-generating one.
+      # That auxiliary model call would land in the same rollout's capture and
+      # can be mistaken for the main chain's root during trajectory
+      # reconstruction (a short call can complete first).
+      extra_args: ["--title", "cudagym-run"]
+      # null = no extra framing. The task prompt in each row already carries
+      # the operational instructions, and in container mode SolSwarm's
+      # entrypoint renders its own role prompt and never reads this. Set a
+      # string to prepend framing; run() folds it in ahead of the row prompt.
+      system_prompt: null
+      opencode_config:
+        permission:
+          bash: allow
+          edit: allow
+          webfetch: allow
+        # Compaction must stay off during training: a mid-run history rewrite
+        # silently drops all post-compaction turns from the token-id
+        # trajectory. The other half of the mitigation is limit.context below,
+        # sized to the model server's window, so an overlong run ends instead
+        # of compacting. opencode 1.17.9 exits 1 on unrecognized config keys.
+        compaction:
+          auto: false
+          prune: false
+        # Auxiliary small-model calls (summaries and similar) must not hit
+        # models.dev for an unknown custom provider; pin them to the policy
+        # model explicitly.
+        small_model: nvinf/nvidia/qwen/qwen3-next-80b-a3b-instruct
+        provider:
+          nvinf:
+            npm: "@ai-sdk/openai-compatible"
+            options:
+              baseURL: ${policy_base_url}
+              apiKey: ${policy_api_key}
+            models:
+              nvidia/qwen/qwen3-next-80b-a3b-instruct:
+                limit:
+                  # The window the model server actually accepts: NeMo-RL
+                  # injects policy_max_model_len from the recipe, so opencode
+                  # plans against the limit vLLM enforces. Outside training
+                  # the key is absent and the default applies. Output tracks
+                  # the generation max_new_tokens.
+                  context: ${oc.select:policy_max_model_len,131072}
+                  output: 16384
+      datasets:
+      - name: example
+        type: example
+        jsonl_fpath: resources_servers/cudagym/data/example.jsonl
