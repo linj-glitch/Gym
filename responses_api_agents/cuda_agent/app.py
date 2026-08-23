@@ -785,24 +785,30 @@ class CudaAgent(OpenCodeAgent):
         base = self._rollout_model_base_url(None)
         if base is None:
             return
+        # Mirror exactly what the agent will send: the first model id from the
+        # live opencode config. The Gym proxy rewrites the model field to the
+        # configured policy model (and serves no /v1/models route — it 404s,
+        # kernelwriter-27b-12), so probing with the agent's own alias exercises
+        # the same rewrite path.
+        model_id = "default"
+        for provider in (self.config.opencode_config.get("provider") or {}).values():
+            if isinstance(provider, dict) and provider.get("models"):
+                model_id = next(iter(provider["models"]))
+                break
         budget = float(os.environ.get("CUDA_AGENT_MODEL_LIVE_TIMEOUT", "300"))
         start = time()
         last_err = "no attempt completed"
         global _MODEL_LIVE_LOGGED
         timeout = aiohttp.ClientTimeout(total=30)
+        payload = {
+            "model": model_id,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+            "stream": False,
+        }
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while time() - start < budget:
                 try:
-                    async with session.get(f"{base}/models") as r:
-                        r.raise_for_status()
-                        data = await r.json()
-                    model_id = ((data.get("data") or [{}])[0]).get("id")
-                    payload = {
-                        "model": model_id,
-                        "messages": [{"role": "user", "content": "ping"}],
-                        "max_tokens": 1,
-                        "stream": False,
-                    }
                     async with session.post(f"{base}/chat/completions", json=payload) as r:
                         r.raise_for_status()
                         await r.read()
