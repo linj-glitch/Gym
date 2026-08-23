@@ -110,6 +110,7 @@ from time import time
 from typing import Any, Literal, Optional
 from uuid import uuid4
 
+import aiohttp
 from cudagym.rl import (
     canonical_sku,
     entry_point_for,
@@ -272,6 +273,9 @@ _MANIFEST_WRITTEN: set[str] = set()
 # could not be built. The sandbox is deterministic given the image and the
 # checkout, so one completed check per server process is a sufficient signal.
 _SANDBOX_CHECKED = False
+# The model-liveness probe logs its success line once per process; every
+# rollout still runs the probe (it is one 1-token request when healthy).
+_MODEL_LIVE_LOGGED = False
 # One extracted agent-image container per process, shared read-only by every
 # rollout; the lock serializes the first extraction.
 _ENROOT_BASE: Optional[tuple[str, Path]] = None
@@ -763,6 +767,62 @@ class CudaAgent(OpenCodeAgent):
         if self.config.model_server is None:
             return None
         return self.resolve_model_base_url(self.config.model_server.name, rollout_id)
+
+    async def _await_model_live(self, rollout_id_for_log: str) -> None:
+        """Block until the policy model endpoint completes a 1-token request.
+
+        The engines behind the Gym model proxy sleep between GRPO steps and
+        only serve again once the trainer's refit wakes them; at 27B that
+        wake+refit window is minutes long, and an agent that fires into it
+        hangs silently until the outer backstop (kernelwriter-27b-9: 32/32
+        rollouts, zero completed calls, nothing in any log). Probing the SAME
+        proxy the agent will use — via the plain ``/v1`` root, so the
+        rollout's token capture stays clean — turns that hang into a short
+        absorbed wait, or a loud per-rollout error when the serving stack is
+        actually broken. The proxy injects the on-policy sampling overrides,
+        so the probe passes the server's sampling assert like any agent call.
+        """
+        base = self._rollout_model_base_url(None)
+        if base is None:
+            return
+        budget = float(os.environ.get("CUDA_AGENT_MODEL_LIVE_TIMEOUT", "300"))
+        start = time()
+        last_err = "no attempt completed"
+        global _MODEL_LIVE_LOGGED
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while time() - start < budget:
+                try:
+                    async with session.get(f"{base}/models") as r:
+                        r.raise_for_status()
+                        data = await r.json()
+                    model_id = ((data.get("data") or [{}])[0]).get("id")
+                    payload = {
+                        "model": model_id,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "max_tokens": 1,
+                        "stream": False,
+                    }
+                    async with session.post(f"{base}/chat/completions", json=payload) as r:
+                        r.raise_for_status()
+                        await r.read()
+                    if not _MODEL_LIVE_LOGGED:
+                        _MODEL_LIVE_LOGGED = True
+                        LOG.info(
+                            "policy model endpoint %s live after %.1fs (model=%s)",
+                            base,
+                            time() - start,
+                            model_id,
+                        )
+                    return
+                except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, IndexError, TypeError, ValueError) as e:
+                    last_err = repr(e)
+                    await asyncio.sleep(5.0)
+        raise RuntimeError(
+            f"policy model endpoint {base} did not serve a completion within {budget:.0f}s "
+            f"(last error: {last_err}) — generation engines asleep or serving misconfigured; "
+            f"failing rollout {rollout_id_for_log} instead of hanging the agent."
+        )
 
     def _namespace_argv(
         self,
@@ -1384,6 +1444,10 @@ class CudaAgent(OpenCodeAgent):
             if probe_this_rollout:
                 _SANDBOX_CHECKED = True
 
+            # Absorb the trainer's refit/wake window (or fail loudly) BEFORE
+            # staging the sandbox and burning the agent's wall-clock budget.
+            await self._await_model_live(rollout_id_for_log)
+
             if container_mode:
                 # Named before it is built, so the finally removes the skeleton
                 # even if the staging below fails part way through.
@@ -1421,12 +1485,20 @@ class CudaAgent(OpenCodeAgent):
             # SOLSWARM_MAX_DURATION = the configured timeout, enforced by the
             # entrypoint); the outer wait adds a fixed tail and is a backstop.
             outer_budget = _outer_wait_budget(self.config.timeout, container_mode)
+            # The agent's merged stdout+stderr streams to a per-rollout file
+            # on shared storage: PIPE capture loses everything on the timeout
+            # path (kernelwriter-27b-9 hung 900s and left empty transcripts),
+            # and this stream is the only wire-level record of a hung provider
+            # (opencode's connection retries land on stderr).
+            oc_log_path = self._manifest_dir() / "opencode" / f"{rollout_id_for_log}.log"
+            oc_log_path.parent.mkdir(parents=True, exist_ok=True)
+            oc_log = open(oc_log_path, "wb")
             launch_wall = time()
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=str(work_dir),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stdout=oc_log,
+                stderr=asyncio.subprocess.STDOUT,
                 env=env,
                 # Fresh session: proc.pid becomes the process group id of
                 # every descendant, so timeout/cancel can kill the whole tree
@@ -1434,12 +1506,14 @@ class CudaAgent(OpenCodeAgent):
                 start_new_session=True,
             )
             try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=outer_budget)
+                await asyncio.wait_for(proc.wait(), timeout=outer_budget)
             except asyncio.TimeoutError:
-                stdout = b""
                 await _terminate_process_tree(proc)
-                LOG.warning("opencode timed out after %ds (outer backstop budget)", outer_budget)
-                stderr = b""
+                LOG.warning(
+                    "opencode timed out after %ds (outer backstop budget); its output is at %s",
+                    outer_budget,
+                    oc_log_path,
+                )
             except asyncio.CancelledError:
                 # A cancelled /run must not orphan the subprocess tree: a
                 # surviving entrypoint would keep generating against the
@@ -1448,12 +1522,27 @@ class CudaAgent(OpenCodeAgent):
                 # session db locked. Same tree kill as the timeout path.
                 await _terminate_process_tree(proc)
                 raise
+            finally:
+                oc_log.close()
+            # Downstream consumers (warning excerpts, the container transcript
+            # fallback) read the tail of the persisted stream where the PIPE
+            # variables used to be.
+            try:
+                _oc_tail = oc_log_path.read_bytes()[-4000:]
+            except OSError:
+                _oc_tail = b""
+            stdout, stderr = _oc_tail, _oc_tail
             if container_mode and rollout_dir is not None:
                 self._log_sandbox_startup(rollout_dir, launch_wall, rollout_id_for_log)
             # A failed agent run is still parsed below: the session db may hold usable turns.
             if proc.returncode not in (0, None) or self.config.keep_transcripts:
                 if proc.returncode not in (0, None):
-                    LOG.warning("opencode exited %s: %s", proc.returncode, stderr.decode(errors="replace")[:500])
+                    LOG.warning(
+                        "opencode exited %s (full output at %s): %s",
+                        proc.returncode,
+                        oc_log_path,
+                        stderr.decode(errors="replace")[:500],
+                    )
                 if container_mode:
                     # The entrypoint's whole assembly transcript goes to a file
                     # in the rollout dir (the --rc launch script redirects its
