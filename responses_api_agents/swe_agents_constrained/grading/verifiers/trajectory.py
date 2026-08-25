@@ -109,6 +109,14 @@ class Step:
     # reconstructs API-round boundaries from the flat item list, including
     # bare-tool-call rounds that contain no message text.
     turn: int = 0
+    # True for steps parsed from `reasoning` items — the model's private
+    # chain-of-thought, which chat surfaces carry inside <think> blocks.
+    # Causality contract (2026-08-22): a fail verdict at turn N must be
+    # decidable from the visible record at turns <= N. Reasoning text is not
+    # part of the visible output, so per-turn format verifiers must not attach
+    # verdicts to these steps (doing so produced failures no
+    # truncate-and-regrade audit could reproduce).
+    is_reasoning: bool = False
 
 
 @dataclass
@@ -191,9 +199,19 @@ def parse_trajectory(output_items: Any) -> List[Step]:
     for i, item in enumerate(output_items or []):
         item_type = _get(item, "type")
         if item_type == "message":
+            # Causality contract (2026-08-22): terminal-feedback scaffolds
+            # (terminus) return environment output as user-role message items.
+            # That text is environment-authored — parsing it as a thinking
+            # step attributed its content (fences, error text) to the model
+            # and collapsed every such trajectory into one turn. Non-assistant
+            # messages are observations; items without a role keep the legacy
+            # assistant default (unit fixtures, synthetic finals).
+            role = _get(item, "role") or "assistant"
             steps.append(Step(
                 text=extract_message_text(item),
-                step_index=i, step_type="thinking", is_first_step=(i == 0),
+                step_index=i,
+                step_type="thinking" if role == "assistant" else "observation",
+                is_first_step=(i == 0),
             ))
         elif item_type == "function_call":
             name = _get(item, "name", "")
@@ -213,6 +231,7 @@ def parse_trajectory(output_items: Any) -> List[Step]:
             text = " ".join(_get(s, "text", "") for s in summary)
             steps.append(Step(
                 text=text, step_index=i, step_type="thinking", is_first_step=(i == 0),
+                is_reasoning=True,
             ))
 
     for step in reversed(steps):
@@ -400,6 +419,9 @@ def grade_constraints(
             ctx = {
                 "step_index": step.step_index,
                 "step_type": step.step_type,
+                # Causality contract (2026-08-22): verifiers that grade visible
+                # output consult this to skip private reasoning steps.
+                "is_reasoning": step.is_reasoning,
                 "tool_name": step.tool_name,
                 "prior_steps": [s for s in steps if s.step_index < step.step_index],
                 "is_first_step": step.is_first_step,

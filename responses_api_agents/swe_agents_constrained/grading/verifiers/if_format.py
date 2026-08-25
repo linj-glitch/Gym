@@ -154,6 +154,12 @@ class _FilePathBeforeCodeVerifier(BaseVerifier):
     )
 
     def check(self, text: str, context: dict | None = None) -> VerifierResult:
+        # Causality contract (2026-08-22): the fail must attach to the turn
+        # whose VISIBLE text shows the unpathed code block. Reasoning steps
+        # are private <think> text — grading them attributed the failure to a
+        # turn whose visible record contains no code block at all.
+        if (context or {}).get("is_reasoning"):
+            return VerifierResult(passed=True)
         parts = text.split('```')
         for i in range(0, len(parts) - 1, 2):
             preceding = parts[i][-300:] if len(parts[i]) > 300 else parts[i]
@@ -241,7 +247,13 @@ class _MonotonicStepIndexHeaderVerifier(BaseVerifier):
         # 2026-08-12 trace-QA: the constraint governs status updates (prose);
         # grading flattened tool calls failed silent trajectories the judge
         # correctly called NOT_TRIGGERED.
-        if ctx.get("step_type") == "tool_call":
+        # Causality contract (2026-08-22): reasoning steps are private <think>
+        # text, not status updates — attaching header fails to them pinned the
+        # verdict on turns whose visible record owes no header. The regressing
+        # (later) visible update carries the out-of-order fail; the prior scan
+        # below likewise ignores reasoning drafts so the expected index comes
+        # from visible headers only.
+        if ctx.get("step_type") == "tool_call" or ctx.get("is_reasoning"):
             return VerifierResult(passed=True)
         m = self._HEADER_RE.search(text)
         if not m:
@@ -249,6 +261,8 @@ class _MonotonicStepIndexHeaderVerifier(BaseVerifier):
         n = int(m.group(1))
         prior = ctx.get('prior_steps') or []
         for step in reversed(prior):
+            if getattr(step, "is_reasoning", False):
+                continue
             pm = self._HEADER_RE.search(_step_text(step))
             if pm:
                 pn = int(pm.group(1))
@@ -509,6 +523,13 @@ class _CodeCiteLineRangeFormatVerifier(BaseVerifier):
     _LINE_RANGE_RE = re.compile(r'^\d+:\d+:\S')
 
     def check(self, text: str, context: dict | None = None) -> VerifierResult:
+        # Causality contract (2026-08-22): attach the fail to the turn whose
+        # VISIBLE text carries the offending fence. Reasoning steps are private
+        # <think> text; grading their draft fences pinned the verdict on a turn
+        # whose visible record shows no such citation (truncate-and-regrade
+        # audit could never reproduce those fails).
+        if (context or {}).get("is_reasoning"):
+            return VerifierResult(passed=True)
         infos = self._FENCE_RE.findall(text)
         if not infos:
             return VerifierResult(passed=True)  # no fences — N/A
@@ -2197,13 +2218,24 @@ class _SingleToolCallPerMessageVerifier(BaseVerifier):
 
     def check(self, text: str, context: dict | None = None) -> VerifierResult:
         ctx = context or {}
+        # Causality contract (2026-08-22): the constraint governs tool calls,
+        # so the fail verdict must attach to the TOOL CALL itself (the step of
+        # the multi-call / bare-call message). Running the prior[-1] logic on
+        # fenced text steps attached "bare tool call" fails one step off — to
+        # narration or reasoning text instead of the offending call.
+        if ctx.get("step_type") != "tool_call":
+            return VerifierResult(passed=True)
         prior = ctx.get("prior_steps") or []
-        if prior and getattr(prior[-1], "step_type", "") == "tool_call":
+        # Narration must be VISIBLE output; skip private reasoning steps when
+        # looking back at what accompanied this call (same contract).
+        prev = next((s for s in reversed(prior)
+                     if not getattr(s, "is_reasoning", False)), None)
+        if prev is not None and getattr(prev, "step_type", "") == "tool_call":
             return VerifierResult(passed=False,
                                   violation="two tool calls in one message (no observation between)")
-        if not prior or getattr(prior[-1], "step_type", "") != "thinking":
+        if prev is None or getattr(prev, "step_type", "") != "thinking":
             return VerifierResult(passed=False, violation="bare tool call with no narration prose")
-        narration = _strip_narration(_step_text(prior[-1]))
+        narration = _strip_narration(_step_text(prev))
         prose_words = sum(len(l.split()) for l in narration.splitlines()
                           if l.strip() and not self._TAG_LINE.match(l.strip()))
         if prose_words < 5:
@@ -2228,13 +2260,22 @@ class _PhaseTagOrderedLifecycleVerifier(BaseVerifier):
             return VerifierResult(passed=True)
         if not _is_assistant_step(ctx):
             return VerifierResult(passed=True)
+        # Causality contract (2026-08-22): the tag obligation binds VISIBLE
+        # assistant messages. Reasoning steps are private <think> text —
+        # failing them pinned the verdict on turns whose visible record has no
+        # message owing a tag; an ordering regression must fail at the later,
+        # regressing visible message (decidable from history at that turn),
+        # so the prior-tag scan also reads visible messages only.
+        if ctx.get("is_reasoning"):
+            return VerifierResult(passed=True)
         m = self._TAG.match(text)
         if not m:
             return VerifierResult(passed=False, violation="message does not open with a [PHASE:...] tag")
         prior = ctx.get("prior_steps") or []
         prior_tags = []
         for s in prior:
-            if getattr(s, "step_type", "") in ("thinking", "final_answer"):
+            if getattr(s, "step_type", "") in ("thinking", "final_answer") \
+                    and not getattr(s, "is_reasoning", False):
                 pm = self._TAG.match(_step_text(s))
                 if pm:
                     prior_tags.append(pm.group(1))
@@ -2428,38 +2469,55 @@ class _UncertaintyFlagVerifier(BaseVerifier):
 
 
 class _JsonErrorReportingVerifier(BaseVerifier):
-    """Error JSON is owed when the model REPORTS an error in its own prose.
+    """Error JSON is owed at the FIRST turn after a failure observation.
 
-    2026-08-12 trace-QA repair: the old trigger (any failure observation) owed
-    JSON from whatever step came next — including silent tool calls — which
-    the judge consistently read as NOT_TRIGGERED. The description says
-    'Report all errors as JSON': the obligation binds the act of reporting,
-    so the trigger is error-narration in the model's prose after a failure
-    observation; steps that don't discuss the error owe nothing.
+    Causality contract repair (2026-08-22): the old trigger armed on ANY prior
+    failure and fired on whatever later step happened to narrate the error —
+    frequently a private reasoning step several turns downstream, so the fail
+    verdict attached to text no truncated re-grade could see (pilot audit:
+    100% of fails flipped). The obligation is now anchored: a failure
+    observation must be reported as JSON in the model's first VISIBLE output
+    after that observation; the fail verdict attaches to exactly that step
+    (the turn where the report should have appeared but didn't), which is
+    decidable from turns <= it. One unreported failure = one fail verdict.
+    Scope is ALL_STEPS; the verifier anchors itself to the trailing
+    observation block so bare tool calls after an error are covered too.
     """
 
     _FIELDS = ("type", "file", "line", "message")
-    _ERROR_NARRATION = re.compile(
-        r'\b(error|exception|traceback|fail(?:s|ed|ure|ing)?)\b', re.IGNORECASE)
 
     def check(self, text: str, context: dict | None = None) -> VerifierResult:
         ctx = context or {}
+        # Private reasoning is not a report surface (causality contract
+        # 2026-08-22): neither a violation nor a discharge can live there.
+        if ctx.get("is_reasoning"):
+            return VerifierResult(passed=True)
         prior = ctx.get("prior_steps") or []
-        obs = [s for s in prior if getattr(s, "step_type", "") == "observation"]
-        # 2026-08-12 round 2: the error report often comes several turns after
-        # the failing observation — any prior failure arms the trigger.
-        if not any(_is_failure_observation(_step_text(o)) for o in obs):
+        # Walk back to the observation block this step responds to. Any
+        # NON-reasoning step in between already carried the turn's verdict
+        # (the first visible output owns the obligation — later steps of the
+        # same turn owe nothing).
+        i = len(prior) - 1
+        while i >= 0 and getattr(prior[i], "step_type", "") != "observation":
+            if not getattr(prior[i], "is_reasoning", False):
+                return VerifierResult(passed=True)
+            i -= 1
+        if i < 0:
             return VerifierResult(passed=True)
-        if not _is_assistant_step(ctx):
-            return VerifierResult(passed=True)
-        if not self._ERROR_NARRATION.search(_strip_narration(text)):
+        failed = False
+        while i >= 0 and getattr(prior[i], "step_type", "") == "observation":
+            if _is_failure_observation(_step_text(prior[i])):
+                failed = True
+            i -= 1
+        if not failed:
             return VerifierResult(passed=True)
         for o in _find_json_objects(text):
             if all(f in o for f in self._FIELDS):
                 return VerifierResult(passed=True)
         return VerifierResult(
             passed=False,
-            violation="error reported in prose but not as JSON with type/file/line/message")
+            violation="tool call errored but the first output after the failure "
+                      "observation carries no JSON report with type/file/line/message")
 
 
 class _CommandExitCodeVerifier(BaseVerifier):

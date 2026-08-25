@@ -405,7 +405,13 @@ AGENTIC_CONSTRAINT_REGISTRY: dict[AgenticConstraintType, AgenticConstraint] = {
     ),
     AgenticConstraintType.JSON_ERROR_REPORTING: AgenticConstraint(
         constraint_type=AgenticConstraintType.JSON_ERROR_REPORTING,
-        scope=ConstraintScope.AFTER_TOOL_CALL,
+        # Causality contract (2026-08-22): AFTER_TOOL_CALL scoped grading to
+        # the single step directly after each observation — often a private
+        # reasoning step, so the missing-report fail attached to text no
+        # truncated re-grade could see. ALL_STEPS lets the verifier anchor
+        # itself to the trailing observation block and attach the verdict to
+        # the first VISIBLE output after the failure (message or bare call).
+        scope=ConstraintScope.ALL_STEPS,
         description='Report all errors as JSON with fields: {"type": ..., "file": ..., "line": ..., "message": ...}.',
         verifier_approach="json_parse",
         parameters={"required_fields": ["type", "file", "line", "message"]},
