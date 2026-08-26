@@ -656,6 +656,109 @@ def test_multiple_roots_are_masked_instead_of_rewarding_an_auxiliary_chain(tmp_p
     assert built["metrics"]["chains"] == 2
 
 
+# --- the multi-chain masking knob -----------------------------------------------
+
+
+# A history rewrite: the harness resends turn 1's history without token 11
+# (a stripped reasoning span), so turn 2's prompt no longer extends turn 1's
+# cumulative sequence and the build splits into two clean roots.
+HISTORY_REWRITE = [
+    _entry("c1", [1, 2], [10, 11, 12], created_at=1.0),
+    _entry("c2", [1, 2, 10, 12, 7], [13], created_at=2.0),
+]
+
+
+class _FrozenSource:
+    """A ``TokenSource`` serving one pre-frozen snapshot."""
+
+    def __init__(self, entries, incomplete=False):
+        self._entries = tuple(entries)
+        self._incomplete = incomplete
+
+    async def freeze(self, rollout_id):
+        return TokenCaptureSnapshot(
+            rollout_id=rollout_id,
+            entries=self._entries,
+            incomplete=self._incomplete,
+            snapshot_id="frozen-1",
+            version=1,
+        )
+
+    async def drop(self, rollout_id, *, snapshot_id, version):
+        return True
+
+    async def close(self):
+        return None
+
+
+def test_a_history_rewrite_split_is_masked_by_default():
+    """Strict upstream behavior: a multi-root build masks even when clean."""
+    built = asyncio.run(trajectories_from_source("t0-r0", _FrozenSource(HISTORY_REWRITE)))
+
+    assert built["mask_sample"] is True
+    assert built["metrics"]["roots"] == 2
+    assert built["metrics"]["chains"] == 2
+    # The split is pure: nothing was quarantined and no retry is unresolved.
+    assert built["metrics"]["quarantined_calls"] == 0
+    assert built["unresolved_retries"] == []
+
+
+def test_mask_multi_chain_off_delivers_the_main_chain_of_a_pure_split():
+    """Train on the delivered main chain when the only defect is the split.
+
+    A harness that rewrites resent history splits every multi-turn rollout
+    into multiple roots. The knob delivers the main chain and reports the
+    dropped tokens via ``delivered_fraction``.
+    """
+    built = asyncio.run(trajectories_from_source("t0-r0", _FrozenSource(HISTORY_REWRITE), mask_multi_chain=False))
+
+    assert built["mask_sample"] is False
+    # The delivered response is the earliest root's chain.
+    assert _generated_tokens(built["rebuilt_response"]) == [10, 11, 12]
+    # The dropped chain stays visible in metrics.
+    assert built["metrics"]["roots"] == 2
+    assert built["metrics"]["delivered_fraction"] == 0.75
+
+
+def test_mask_multi_chain_off_still_masks_a_quarantined_build():
+    """The knob forgives only the split; quarantined evidence still masks."""
+    ambiguous = [
+        _entry("a", [1, 2], [7, 8]),
+        _entry("b", [1, 2], [7, 8]),
+        _entry("child", [1, 2, 7, 8, 9], [20]),
+    ]
+    built = asyncio.run(trajectories_from_source("t0-r0", _FrozenSource(ambiguous), mask_multi_chain=False))
+
+    # Quarantining the ambiguous subtree leaves no safe trainable chain,
+    # so the build fails closed and delivers nothing.
+    assert built["mask_sample"] is True
+    assert built["rebuilt_response"] is None
+    assert "no safe trainable chain" in built["error"]
+
+
+def test_mask_multi_chain_off_still_masks_an_unresolved_final_retry():
+    """No later call identifies the survivor of a final-call retry."""
+    final_retry = [
+        _entry("c1", [1, 2], [3, 4]),
+        _entry("ra", [1, 2, 3, 4, 5], [6]),
+        _entry("rb", [1, 2, 3, 4, 5], [7]),
+    ]
+    built = asyncio.run(trajectories_from_source("t0-r0", _FrozenSource(final_retry), mask_multi_chain=False))
+
+    assert built["unresolved_retries"]
+    assert built["mask_sample"] is True
+
+
+def test_mask_multi_chain_off_still_masks_an_incomplete_capture():
+    """A missing call is a missing turn regardless of the knob."""
+    built = asyncio.run(
+        trajectories_from_source("t0-r0", _FrozenSource(HISTORY_REWRITE, incomplete=True), mask_multi_chain=False)
+    )
+
+    assert built["mask_sample"] is True
+    assert built["metrics"]["capture_incomplete"] is True
+
+
 def test_the_builder_runs_once_per_rollout(tmp_path, monkeypatch):
     """Run the builder once per rollout.
 

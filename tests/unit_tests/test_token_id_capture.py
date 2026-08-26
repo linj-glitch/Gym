@@ -399,6 +399,15 @@ def test_mask_fraction_limit_defaults_off_and_parses():
     assert configured.token_id_capture.mask_fraction_min_samples == 50
 
 
+def test_mask_multi_chain_defaults_strict_and_parses():
+    """The knob defaults to the strict upstream behavior: multi-chain masks."""
+    default = TokenIdCaptureConfig.model_validate(_block(dir="/tmp/token-capture"))
+    configured = TokenIdCaptureConfig.model_validate(_block(dir="/tmp/token-capture", mask_multi_chain=False))
+
+    assert default.token_id_capture.mask_multi_chain is True
+    assert configured.token_id_capture.mask_multi_chain is False
+
+
 def test_agent_capture_selection_uses_static_agent_config_or_all_agents():
     config = {
         "token_id_capture": {"enabled": True, "rebuild_response": False},

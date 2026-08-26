@@ -2054,6 +2054,57 @@ class TestFinalizeRolloutTokenCapture:
         # Omit the field so presence-based consumers keep healthy samples.
         assert MASK_SAMPLE_KEY not in result
 
+    @staticmethod
+    def _split_capture(store: TokenCaptureStore) -> None:
+        # A history rewrite: the second call's prompt does not extend the first
+        # call's cumulative sequence, so the build splits into two clean roots.
+        store.append(
+            TokenEntry(
+                rollout_id="0-0",
+                model_call_id="c1",
+                prompt_token_ids=[1, 2],
+                generation_token_ids=[4, 5],
+                generation_log_probs=[-0.1, -0.2],
+                created_at=1.0,
+            )
+        )
+        store.append(
+            TokenEntry(
+                rollout_id="0-0",
+                model_call_id="c2",
+                prompt_token_ids=[1, 2, 4, 9],
+                generation_token_ids=[6],
+                generation_log_probs=[-0.3],
+                created_at=2.0,
+            )
+        )
+
+    async def test_the_finalizer_masks_a_history_rewrite_split_by_default(self, tmp_path: Path) -> None:
+        store = TokenCaptureStore(tmp_path)
+        self._split_capture(store)
+        result = self._record()
+
+        with pytest.warns(UserWarning, match="marked for masking"):
+            await finalize_rollout_token_capture(result, store)
+
+        assert result[MASK_SAMPLE_KEY] is True
+        assert result[TOKEN_CAPTURE_KEY]["roots"] == 2
+
+    async def test_the_finalizer_passes_mask_multi_chain_through_to_the_build(self, tmp_path: Path) -> None:
+        store = TokenCaptureStore(tmp_path)
+        self._split_capture(store)
+        result = self._record()
+
+        built = await finalize_rollout_token_capture(result, store, mask_multi_chain=False)
+
+        # The main chain is delivered for training instead of masking the rollout.
+        assert MASK_SAMPLE_KEY not in result
+        assert built[MASK_SAMPLE_KEY] is False
+        [item] = result["response"]["output"]
+        assert item["generation_token_ids"] == [4, 5]
+        # The dropped chain stays visible for aggregate reporting.
+        assert result[TOKEN_CAPTURE_KEY]["delivered_fraction"] == 0.6667
+
     async def test_a_failed_build_keeps_its_records_and_reports_why(self, tmp_path: Path) -> None:
         store = TokenCaptureStore(tmp_path)
         malformed = TokenEntry(
