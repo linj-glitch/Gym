@@ -32,7 +32,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Any
 
-from nemo_gym.token_id_capture.protocols import TokenSink
+from nemo_gym.token_id_capture.protocols import TokenCaptureFrozenError, TokenSink
 from nemo_gym.token_id_capture.records import (
     TokenEntry,
     extract_token_fields,
@@ -174,6 +174,19 @@ async def commit_entry(entry: TokenEntry) -> None:
     try:
         await context.token_sink.put(entry)
         context.committed = True
+    except TokenCaptureFrozenError:
+        # The rollout finished and its capture was frozen while this call was
+        # still in flight (for example its harness was killed at a timeout
+        # backstop). The freeze already judged completeness from the durable
+        # intent ledger, so the verdict is sealed. Drop the late record.
+        # Marking the rollout incomplete here would mutate the frozen state
+        # and break conditional retirement of the snapshot finalize consumed.
+        logger.warning(
+            "Training-token capture for model call %s of rollout %s arrived after the capture "
+            "was frozen; the late record is dropped.",
+            context.model_call_id,
+            context.rollout_id,
+        )
     except Exception:
         await _capture_failed(context, "write")
 

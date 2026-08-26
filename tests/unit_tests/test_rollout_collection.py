@@ -49,10 +49,14 @@ from nemo_gym.rollout_collection import (
     loads_jsonl_line,
 )
 from nemo_gym.token_id_capture import (
+    CaptureContext,
     TokenCaptureSnapshot,
     TokenCaptureStore,
     TokenEntry,
     clear_token_captures_for_rollouts,
+    commit_entry,
+    reset_token_sink,
+    set_token_sink,
 )
 from nemo_gym.token_id_capture.delivery import (
     MASK_SAMPLE_KEY,
@@ -2021,6 +2025,45 @@ class TestFinalizeRolloutTokenCapture:
         assert second.get("rebuilt_response") is None
         assert second.get("_capture_snapshot", {}).get("snapshot_id")
         assert result["response"]["output"] == rebuilt
+
+    async def test_a_capture_landing_after_finalize_is_dropped_and_the_snapshot_still_retires(
+        self, tmp_path: Path
+    ) -> None:
+        """Keep the frozen snapshot stable when a model call lands late.
+
+        A harness killed at a timeout backstop leaves a model call in flight.
+        The finished record is finalized, which freezes the capture.
+        The orphaned call then completes and tries to commit its entry.
+        The late record must be dropped without mutating the frozen state,
+        so the snapshot finalize consumed can still be retired after handoff.
+        """
+        store = TokenCaptureStore(tmp_path)
+        self._capture(store)
+        result = self._record()
+        built = await finalize_rollout_token_capture(result, store)
+        assert built is not None and built["rebuilt_response"] is not None
+
+        late = TokenEntry(
+            rollout_id="0-0",
+            model_call_id="late",
+            prompt_token_ids=[1, 2, 3, 4, 5, 9],
+            generation_token_ids=[6],
+            generation_log_probs=[-0.3],
+        )
+        context = CaptureContext(rollout_id="0-0", model_call_id="late", token_sink=store)
+        token = set_token_sink(context)
+        try:
+            await commit_entry(late)
+        finally:
+            reset_token_sink(token)
+
+        # The late record is dropped and the sealed verdict is unchanged.
+        assert context.committed is False
+        assert [entry.model_call_id for entry in store.read_entries("0-0")] == ["c1"]
+        assert MASK_SAMPLE_KEY not in result
+        assert not store.is_incomplete("0-0")
+        assert await retire_rollout_token_capture("0-0", store, built) is True
+        assert store.read_entries("0-0") == []
 
     async def test_no_source_means_this_caller_is_not_capturing(self, tmp_path: Path) -> None:
         result = self._record()

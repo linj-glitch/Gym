@@ -53,6 +53,7 @@ from nemo_gym.token_id_capture.consumer import (
     trajectories_from_source,
 )
 from nemo_gym.token_id_capture.protocols import (
+    TokenCaptureFrozenError,
     TokenCaptureSnapshot,
     TokenSink,
     TokenSource,
@@ -91,6 +92,7 @@ __all__ = [
     "make_token_store",
     "TokenSink",
     "TokenSource",
+    "TokenCaptureFrozenError",
     "TokenCaptureSnapshot",
     "install_token_sink",
     "install_token_source",

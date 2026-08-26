@@ -33,6 +33,19 @@ from typing import Protocol, runtime_checkable
 from nemo_gym.token_id_capture.records import TokenEntry
 
 
+class TokenCaptureFrozenError(RuntimeError):
+    """Reject a write that arrived after its rollout's capture was frozen.
+
+    Freezing seals a rollout's capture verdict.
+    A model call can still be in flight at that point.
+    Its harness may have been killed at a timeout backstop.
+    The sink fails the late write so no successful write follows a freeze.
+    The caller drops the late record and must not mark the rollout incomplete.
+    The freeze already judged completeness from the durable intent ledger.
+    A post-freeze mark would mutate the consumed snapshot and break its retirement.
+    """
+
+
 @dataclass(frozen=True)
 class TokenCaptureSnapshot:
     """An immutable view of one rollout's frozen capture records."""
@@ -53,7 +66,7 @@ class TokenSink(Protocol):
 
         Repeating the same call id with the same payload is a no-op.
         Reusing a call id with a different payload must fail.
-        Writing after the rollout is frozen must fail.
+        Writing after the rollout is frozen must fail with ``TokenCaptureFrozenError``.
 
         This method may raise.
         The caller marks the rollout incomplete.
