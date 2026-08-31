@@ -24,6 +24,14 @@ constraint == 'pass'), evaluated by the same code:
 
 Ungraded or missing-constraint rows earn 0.0: mining never counted a branch
 as success without an explicit constraint PASS, and neither do we.
+
+The response also carries scalar diagnostics that decompose the reward into
+its two axes. NeMo-RL's per-agent aggregator (rollouts.py:1479) promotes every
+bool/int/float field of this response to `<agent>/<field>/mean` and silently
+drops everything else, which is why `matched` shows up in wandb but the string
+`match_failure_reason` and `constraint_verdict` do not. The bools below are
+one-hot projections of those two strings so both axes become observable
+without changing the reward.
 """
 import json
 import logging
@@ -70,6 +78,12 @@ class ConstrainedBinaryPivotResourcesServerConfig(BaseResourcesServerConfig):
     # L2 aggregation threshold; 0.8 = swe_pivot verify() binary-mode default,
     # the value the mining belt's binary_match used.
     similarity_full_credit: float = 0.8
+    # Grade the constraint on match-failed rollouts too. Off by default: it
+    # adds a verifier pass per unmatched rollout on the generation critical
+    # path and buys only a diagnostic — reward is unchanged either way, since
+    # reward requires matched. Turn it on to observe the UNCONDITIONAL
+    # constraint pass rate; with it off, only P(pass | matched) is knowable.
+    always_grade_constraint: bool = False
 
 
 class ConstrainedBinaryPivotRunRequest(BaseRunRequest):
@@ -86,6 +100,34 @@ class ConstrainedBinaryPivotVerifyResponse(BaseVerifyResponse):
     match_failure_reason: str
     constraint_verdict: ConstraintVerdict
 
+    # --- constraint axis (instruction following) ---
+    # All four are False when grading did not run — i.e. the match failed and
+    # always_grade_constraint is off. That keeps `constraint_absent` meaning
+    # "the row carried no constraint declaration" rather than doubling as the
+    # not-graded sentinel, which is what ConstraintVerdict.NO_CONSTRAINT_IN_ROW
+    # does on the enum.
+    constraint_passed: bool
+    constraint_failed: bool
+    constraint_ungraded: bool
+    constraint_absent: bool
+    # passed or failed — the denominator for P(pass | graded).
+    constraint_graded: bool
+
+    # --- match axis (task solving) ---
+    # One-hot over _binary_match's failure reasons; exactly one is True when
+    # matched is False, all False when matched is True.
+    match_fail_kind: bool
+    match_fail_invalid_output: bool
+    match_fail_tool_name: bool
+    match_fail_target: bool
+    match_fail_similarity: bool
+    # L2 score, kept even when it lands under the threshold, so a policy
+    # creeping up on similarity_full_credit is visible before it converts into
+    # match rate. None (and skipped by the aggregator) when the rollout failed
+    # at L0/L1 and never reached the similarity stage.
+    argument_similarity: Optional[float] = None
+    similarity_evaluated: bool
+
 
 class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
     config: ConstrainedBinaryPivotResourcesServerConfig
@@ -95,27 +137,34 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
 
     # ---- match axis (mirror of _pivot_match.binary_match + _branch_match) ----
 
-    def _binary_match(self, expected: dict, sampled: Optional[Any]) -> tuple[bool, str]:
+    def _binary_match(
+        self, expected: dict, sampled: Optional[Any]
+    ) -> tuple[bool, str, Optional[float]]:
+        """Return (matched, failure_reason, argument_similarity_or_None).
+
+        The similarity is reported whenever L2 was reached, pass or fail; it is
+        None for rollouts rejected at L0/L1, where no similarity exists.
+        """
         if expected.get("type") == "message":
             # pivot_branch_probe._branch_match message-kind rule: a message
             # was demonstrated, so the sampled turn must not call a tool.
             if sampled is None or sampled.type != "function_call":
-                return True, "none"
-            return False, "kind_mismatch"
+                return True, "none", None
+            return False, "kind_mismatch", None
         if sampled is None or sampled.type != "function_call":
-            return False, "model_output_invalid"
+            return False, "model_output_invalid", None
         e_call = {"name": expected.get("name", ""), "arguments": expected.get("arguments", "")}
         r_call = {"name": getattr(sampled, "name", ""), "arguments": getattr(sampled, "arguments", "")}
         e_name, e_cat, e_args = extract_tool_info(e_call)
         r_name, r_cat, r_args = extract_tool_info(r_call)
         if not verify_tool_name_match(r_name, r_cat, e_name, e_cat):
-            return False, "tool_name_mismatch"
+            return False, "tool_name_mismatch", None
         if not verify_target_match(r_cat, r_args, e_cat, e_args):
-            return False, "target_mismatch"
+            return False, "target_mismatch", None
         sim = compute_argument_similarity(r_cat, r_args, e_cat, e_args)
         if sim < self.config.similarity_full_credit:
-            return False, "similarity_below_threshold"
-        return True, "none"
+            return False, "similarity_below_threshold", sim
+        return True, "none", sim
 
     # ---- constraint axis (mirror of grade_branch_in_context) ----
 
@@ -156,10 +205,15 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
 
         expected = _dump(body.expected_action)
         sampled = extract_tool_call_or_text(body.response)
-        matched, why = self._binary_match(expected, sampled)
+        matched, why, similarity = self._binary_match(expected, sampled)
 
         verdict = ConstraintVerdict.NO_CONSTRAINT_IN_ROW
-        if matched:  # constraint grading only decides matched cases; skip cost otherwise
+        # Constraint grading only decides matched cases, so by default we skip
+        # the cost otherwise; always_grade_constraint trades that cost for the
+        # unconditional pass rate. Either way `graded` records whether the
+        # verifier actually ran, which is what the diagnostics key off.
+        graded = matched or self.config.always_grade_constraint
+        if graded:
             metadata = getattr(body.responses_create_params, "metadata", None)
             if metadata is not None and hasattr(metadata, "model_dump"):
                 metadata = metadata.model_dump()
@@ -173,7 +227,9 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
 
         # Binary, mining-aligned: success = matched AND constraint PASS.
         # Rows without a constraint (not produced by the pivot belt) degrade
-        # to match-only — still strictly 0/1.
+        # to match-only — still strictly 0/1. Unchanged by the diagnostics and
+        # by always_grade_constraint: a match failure is 0.0 whatever verdict
+        # the extra grading pass returns.
         constraint_ok = verdict in (ConstraintVerdict.PASS, ConstraintVerdict.NO_CONSTRAINT_IN_ROW)
         reward = 1.0 if (matched and constraint_ok) else 0.0
         return ConstrainedBinaryPivotVerifyResponse(
@@ -182,6 +238,19 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
             matched=matched,
             match_failure_reason=why,
             constraint_verdict=verdict,
+            constraint_passed=graded and verdict is ConstraintVerdict.PASS,
+            constraint_failed=graded and verdict is ConstraintVerdict.FAIL,
+            constraint_ungraded=graded and verdict is ConstraintVerdict.UNGRADED,
+            constraint_absent=graded and verdict is ConstraintVerdict.NO_CONSTRAINT_IN_ROW,
+            constraint_graded=graded
+            and verdict in (ConstraintVerdict.PASS, ConstraintVerdict.FAIL),
+            match_fail_kind=why == "kind_mismatch",
+            match_fail_invalid_output=why == "model_output_invalid",
+            match_fail_tool_name=why == "tool_name_mismatch",
+            match_fail_target=why == "target_mismatch",
+            match_fail_similarity=why == "similarity_below_threshold",
+            argument_similarity=similarity,
+            similarity_evaluated=similarity is not None,
         )
 
 
