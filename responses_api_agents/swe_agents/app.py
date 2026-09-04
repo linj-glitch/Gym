@@ -1700,7 +1700,8 @@ AGENT_FRAMEWORK_COMMIT={self.config.agent_framework_commit} \\
             camel_case_tool_names_cmd = ""
 
         agent_env_cmd = "".join(
-            f"export {name}={shlex.quote(str(value))} && " for name, value in (self.config.resolved_agent_env or {}).items()
+            f"export {name}={shlex.quote(str(value))} && "
+            for name, value in (self.config.resolved_agent_env or {}).items()
         )
 
         workspace_check_cmd = ""
@@ -2766,7 +2767,6 @@ class RunOpenHandsAgent(BaseModel):
 ########################################
 
 
-
 def _dump_tool_for_replay(tool: BaseModel) -> dict:
     """Dump a response tool so it re-validates as a request tool param.
 
@@ -2778,6 +2778,7 @@ def _dump_tool_for_replay(tool: BaseModel) -> dict:
     if dumped.get("defer_loading") is None:
         dumped.pop("defer_loading", None)
     return dumped
+
 
 class SWEBenchWrapper(SimpleResponsesAPIAgent):
     config: SWEBenchWrapperConfig
