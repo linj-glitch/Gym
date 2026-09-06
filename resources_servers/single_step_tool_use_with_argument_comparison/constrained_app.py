@@ -32,11 +32,19 @@ drops everything else, which is why `matched` shows up in wandb but the string
 `match_failure_reason` and `constraint_verdict` do not. The bools below are
 one-hot projections of those two strings so both axes become observable
 without changing the reward.
+
+reward_mode="verifier" (2026-09-06) turns the same server into a verifier-only
+GRPO reward: 1.0 iff the constraint verifier PASSES on the model's own action
+(teacher action ignored; match still reported as a diagnostic). The two modes
+are registered under different instance names (configs/swe_pivot_constrained_*
+vs configs/swe_verifier_*) so one training run can carry both and each row
+selects its reward through agent_ref.
 """
+
 import json
 import logging
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 from fastapi import FastAPI
 
@@ -64,6 +72,7 @@ from responses_api_agents.swe_agents_constrained.grading.verifiers.trajectory im
     parse_trajectory,
 )
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,6 +93,21 @@ class ConstrainedBinaryPivotResourcesServerConfig(BaseResourcesServerConfig):
     # reward requires matched. Turn it on to observe the UNCONDITIONAL
     # constraint pass rate; with it off, only P(pass | matched) is knowable.
     always_grade_constraint: bool = False
+    # Which axis decides the reward (Lin, 2026-09-06 — a verifier-only GRPO
+    # recipe that lives NEXT TO pivot, selectable per row via agent_ref):
+    #   "pivot"    : reward = 1 iff binary_match(sampled, expected) AND
+    #                constraint PASS (rows without a constraint degrade to
+    #                match-only). The mining belt's gated-success predicate.
+    #   "verifier" : reward = 1 iff the deterministic constraint verifier
+    #                returns PASS on the model's OWN action, regardless of the
+    #                teacher action. The constraint is always graded. UNGRADED
+    #                (constraint not applicable at the sampled turn) and rows
+    #                without a constraint earn 0.0 — a vacuous pass would let
+    #                the policy collect reward by avoiding the trigger. An
+    #                output the parser cannot read (neither a tool call nor
+    #                text) earns 0.0 as well. `matched` and the match_fail_*
+    #                fields are still computed and reported as diagnostics.
+    reward_mode: Literal["pivot", "verifier"] = "pivot"
 
 
 class ConstrainedBinaryPivotRunRequest(BaseRunRequest):
@@ -137,9 +161,7 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
 
     # ---- match axis (mirror of _pivot_match.binary_match + _branch_match) ----
 
-    def _binary_match(
-        self, expected: dict, sampled: Optional[Any]
-    ) -> tuple[bool, str, Optional[float]]:
+    def _binary_match(self, expected: dict, sampled: Optional[Any]) -> tuple[bool, str, Optional[float]]:
         """Return (matched, failure_reason, argument_similarity_or_None).
 
         The similarity is reported whenever L2 was reached, pass or fail; it is
@@ -196,7 +218,9 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
         if not md.get("constraint_params"):
             logger.warning(
                 "row has constraint=%s but no constraint_params — grading with {} "
-                "(backfill rows for mining/training parity)", name)
+                "(backfill rows for mining/training parity)",
+                name,
+            )
         return {"type": name, "params": params}
 
     async def verify(self, body: ConstrainedBinaryPivotVerifyRequest) -> ConstrainedBinaryPivotVerifyResponse:
@@ -212,7 +236,8 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
         # the cost otherwise; always_grade_constraint trades that cost for the
         # unconditional pass rate. Either way `graded` records whether the
         # verifier actually ran, which is what the diagnostics key off.
-        graded = matched or self.config.always_grade_constraint
+        verifier_mode = self.config.reward_mode == "verifier"
+        graded = matched or self.config.always_grade_constraint or verifier_mode
         if graded:
             metadata = getattr(body.responses_create_params, "metadata", None)
             if metadata is not None and hasattr(metadata, "model_dump"):
@@ -231,7 +256,13 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
         # by always_grade_constraint: a match failure is 0.0 whatever verdict
         # the extra grading pass returns.
         constraint_ok = verdict in (ConstraintVerdict.PASS, ConstraintVerdict.NO_CONSTRAINT_IN_ROW)
-        reward = 1.0 if (matched and constraint_ok) else 0.0
+        if verifier_mode:
+            # Verifier-only GRPO: the teacher action plays no part. PASS on the
+            # model's own action is the only way to earn reward; UNGRADED,
+            # missing constraint, and unparseable output all score 0.0.
+            reward = 1.0 if (sampled is not None and verdict is ConstraintVerdict.PASS) else 0.0
+        else:
+            reward = 1.0 if (matched and constraint_ok) else 0.0
         return ConstrainedBinaryPivotVerifyResponse(
             **body.model_dump(),
             reward=reward,
@@ -242,8 +273,7 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
             constraint_failed=graded and verdict is ConstraintVerdict.FAIL,
             constraint_ungraded=graded and verdict is ConstraintVerdict.UNGRADED,
             constraint_absent=graded and verdict is ConstraintVerdict.NO_CONSTRAINT_IN_ROW,
-            constraint_graded=graded
-            and verdict in (ConstraintVerdict.PASS, ConstraintVerdict.FAIL),
+            constraint_graded=graded and verdict in (ConstraintVerdict.PASS, ConstraintVerdict.FAIL),
             match_fail_kind=why == "kind_mismatch",
             match_fail_invalid_output=why == "model_output_invalid",
             match_fail_tool_name=why == "tool_name_mismatch",

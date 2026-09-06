@@ -8,6 +8,7 @@ diagnostics can never drift from it: NeMo-RL trains on `reward`, and the whole
 point of the extra fields is that they explain that number rather than restate
 it.
 """
+
 import json
 from unittest.mock import MagicMock
 
@@ -33,6 +34,7 @@ from resources_servers.single_step_tool_use_with_argument_comparison.constrained
     ConstraintVerdict,
 )
 
+
 EXPECTED_ARGS = json.dumps({"command": "str_replace", "path": "/repo/a.py"})
 
 
@@ -44,9 +46,7 @@ def _server(**overrides) -> ConstrainedBinaryPivotResourcesServer:
         name="constrained_pivot_server",
         **overrides,
     )
-    return ConstrainedBinaryPivotResourcesServer(
-        config=config, server_client=MagicMock(spec=ServerClient)
-    )
+    return ConstrainedBinaryPivotResourcesServer(config=config, server_client=MagicMock(spec=ServerClient))
 
 
 def _params(metadata: dict | None = None) -> NeMoGymResponseCreateParamsNonStreaming:
@@ -70,9 +70,7 @@ def _response(*output_items) -> NeMoGymResponse:
 
 
 def _call(name: str = "str_replace_editor", arguments: str = EXPECTED_ARGS):
-    return NeMoGymResponseFunctionToolCall(
-        type="function_call", call_id="c1", name=name, arguments=arguments
-    )
+    return NeMoGymResponseFunctionToolCall(type="function_call", call_id="c1", name=name, arguments=arguments)
 
 
 def _message(text: str = "done"):
@@ -101,9 +99,7 @@ class TestConstrainedDiagnostics:
 
     async def test_match_failure_reasons_are_one_hot(self, server) -> None:
         """Exactly one match_fail_* is set on a miss, none on a hit."""
-        expected = ExpectedFunctionCall(
-            type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS
-        )
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
         flags = (
             "match_fail_kind",
             "match_fail_invalid_output",
@@ -124,30 +120,22 @@ class TestConstrainedDiagnostics:
         assert miss.reward == approx(0.0)
 
         # Wrong tool entirely: rejected at L0, before similarity exists.
-        wrong = await self._verify(
-            server, expected, _response(_call(name="execute_bash", arguments="{}"))
-        )
+        wrong = await self._verify(server, expected, _response(_call(name="execute_bash", arguments="{}")))
         assert not wrong.matched
         assert sum(getattr(wrong, f) for f in flags) == 1
         assert wrong.argument_similarity is None
         assert not wrong.similarity_evaluated
 
         # Message expected, tool call produced: the kind_mismatch branch.
-        kind = await self._verify(
-            server, ExpectedMessage(type="message", content="done"), _response(_call())
-        )
+        kind = await self._verify(server, ExpectedMessage(type="message", content="done"), _response(_call()))
         assert not kind.matched
         assert kind.match_fail_kind
         assert sum(getattr(kind, f) for f in flags) == 1
 
     async def test_similarity_reported_when_l2_reached(self, server) -> None:
         """argument_similarity survives even when it lands under threshold."""
-        expected = ExpectedFunctionCall(
-            type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS
-        )
-        divergent = json.dumps(
-            {"command": "str_replace", "path": "/repo/a.py", "new_str": "totally different"}
-        )
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        divergent = json.dumps({"command": "str_replace", "path": "/repo/a.py", "new_str": "totally different"})
         out = await self._verify(server, expected, _response(_call(arguments=divergent)))
         if out.similarity_evaluated:
             assert out.argument_similarity is not None
@@ -157,9 +145,7 @@ class TestConstrainedDiagnostics:
 
     async def test_constraint_bools_track_the_verdict(self, server) -> None:
         """The four verdict bools are one-hot over a graded rollout."""
-        expected = ExpectedFunctionCall(
-            type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS
-        )
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
         out = await self._verify(
             server,
             expected,
@@ -176,17 +162,20 @@ class TestConstrainedDiagnostics:
         assert sum(bools) == 1
         assert out.constraint_graded == (out.constraint_passed or out.constraint_failed)
         # reward is the conjunction, and PASS / absent both count as ok
-        expected_reward = 1.0 if out.constraint_verdict in (
-            ConstraintVerdict.PASS,
-            ConstraintVerdict.NO_CONSTRAINT_IN_ROW,
-        ) else 0.0
+        expected_reward = (
+            1.0
+            if out.constraint_verdict
+            in (
+                ConstraintVerdict.PASS,
+                ConstraintVerdict.NO_CONSTRAINT_IN_ROW,
+            )
+            else 0.0
+        )
         assert out.reward == approx(expected_reward)
 
     async def test_rows_without_a_constraint_are_absent_not_ungraded(self, server) -> None:
         """A row carrying no declaration is `absent`; reward degrades to match-only."""
-        expected = ExpectedFunctionCall(
-            type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS
-        )
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
         out = await self._verify(server, expected, _response(_call()), metadata={})
         assert out.matched
         assert out.constraint_absent
@@ -200,9 +189,7 @@ class TestConstrainedDiagnostics:
         This is what keeps `constraint_absent` meaning "the row had no
         declaration" instead of doubling as the not-graded sentinel.
         """
-        expected = ExpectedFunctionCall(
-            type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS
-        )
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
         out = await self._verify(
             server,
             expected,
@@ -223,19 +210,106 @@ class TestConstrainedDiagnostics:
 
     async def test_always_grade_constraint_does_not_move_reward(self) -> None:
         """The flag buys the unconditional pass rate and nothing else."""
-        expected = ExpectedFunctionCall(
-            type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS
-        )
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
         metadata = {"constraint": "single_tool_call_per_message", "constraint_params": "{}"}
         response = _response(_message())
 
         off = await self._verify(_server(), expected, response, metadata=metadata)
-        on = await self._verify(
-            _server(always_grade_constraint=True), expected, response, metadata=metadata
-        )
+        on = await self._verify(_server(always_grade_constraint=True), expected, response, metadata=metadata)
 
         assert off.reward == approx(on.reward) == approx(0.0)
         assert off.matched == on.matched is False
         # off skips grading entirely; on records a real verdict
         assert not off.constraint_graded
         assert on.constraint_graded or on.constraint_ungraded or on.constraint_absent
+
+
+class TestVerifierRewardMode:
+    """reward_mode=verifier: the constraint verdict on the model's own action is
+    the whole reward; the teacher action is only a diagnostic."""
+
+    # single_tool_call_per_message: at most one tool call per message AND at
+    # least one line of narration prose with it -- a bare tool call FAILS.
+    META = {"constraint": "single_tool_call_per_message", "constraint_params": "{}"}
+    NARRATION = "I will list the repository files first to orient myself before editing."
+
+    @fixture
+    def server(self) -> ConstrainedBinaryPivotResourcesServer:
+        return _server(reward_mode="verifier")
+
+    async def _verify(self, server, expected, response, metadata=None):
+        return await server.verify(
+            ConstrainedBinaryPivotVerifyRequest(
+                responses_create_params=_params(metadata),
+                response=response,
+                expected_action=expected,
+            )
+        )
+
+    async def test_default_mode_is_pivot(self) -> None:
+        assert _server().config.reward_mode == "pivot"
+
+    async def test_pass_earns_reward_even_when_teacher_mismatched(self, server) -> None:
+        """A compliant action that differs from the teacher's still scores 1.0."""
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        out = await self._verify(
+            server,
+            expected,
+            _response(
+                _message(self.NARRATION),
+                _call(name="execute_bash", arguments=json.dumps({"command": "ls"})),
+            ),
+            metadata=self.META,
+        )
+        assert not out.matched
+        assert out.match_fail_tool_name
+        assert out.constraint_graded
+        assert out.constraint_verdict is ConstraintVerdict.PASS
+        assert out.reward == approx(1.0)
+
+    async def test_bare_tool_call_fails_this_constraint(self, server) -> None:
+        """The same call without narration violates the constraint -> 0.0."""
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        out = await self._verify(
+            server,
+            expected,
+            _response(_call(name="execute_bash", arguments=json.dumps({"command": "ls"}))),
+            metadata=self.META,
+        )
+        assert out.constraint_verdict is ConstraintVerdict.FAIL
+        assert out.reward == approx(0.0)
+
+    async def test_fail_earns_nothing_even_when_teacher_matched(self, server) -> None:
+        """Two tool calls in one message violate single_tool_call_per_message."""
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        out = await self._verify(server, expected, _response(_call(), _call()), metadata=self.META)
+        assert out.matched
+        assert out.constraint_graded
+        assert out.constraint_verdict is ConstraintVerdict.FAIL
+        assert out.reward == approx(0.0)
+
+    async def test_row_without_constraint_earns_nothing(self, server) -> None:
+        """No declaration -> nothing to verify -> 0.0 (pivot mode would give 1.0)."""
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        out = await self._verify(server, expected, _response(_call()), metadata={})
+        assert out.matched
+        assert out.constraint_absent
+        assert out.reward == approx(0.0)
+
+    async def test_unparseable_output_earns_nothing(self, server) -> None:
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        out = await self._verify(server, expected, _response(), metadata=self.META)
+        assert not out.matched
+        assert out.reward == approx(0.0)
+
+    async def test_pivot_mode_unchanged_on_the_same_inputs(self) -> None:
+        """The pivot predicate still requires the match: same inputs, opposite rewards."""
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        response = _response(
+            _message(self.NARRATION),
+            _call(name="execute_bash", arguments=json.dumps({"command": "ls"})),
+        )
+        pivot = await self._verify(_server(), expected, response, metadata=self.META)
+        verifier = await self._verify(_server(reward_mode="verifier"), expected, response, metadata=self.META)
+        assert pivot.reward == approx(0.0)
+        assert verifier.reward == approx(1.0)
