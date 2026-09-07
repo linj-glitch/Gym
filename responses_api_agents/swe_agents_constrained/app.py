@@ -60,6 +60,11 @@ from responses_api_agents.swe_agents_constrained.constrained_reward import (
 
 class SWEBenchConstrainedWrapperConfig(SWEBenchWrapperConfig):
     constraint_alpha: float = DEFAULT_CONSTRAINT_ALPHA
+    # "shaped" (default): reward = task * (1 + alpha * constraint_fraction)
+    # "strict": reward = task * 1[all applicable constraints passed at every
+    # applicable turn]; task failure and any violation both give 0 (Lin,
+    # 2026-09-07 -- e2e GRPO recipe). Per-row metadata `reward_mode` overrides.
+    reward_mode: str = "shaped"
 
 
 class SWEBenchConstrainedVerifyResponse(SWEBenchVerifyResponse, BaseMultiRewardVerifyResponse):
@@ -79,6 +84,19 @@ class SWEBenchConstrainedVerifyResponse(SWEBenchVerifyResponse, BaseMultiRewardV
     constraint_scores: dict[str, float] = {}
     constraint_applicable: dict[str, bool] = {}
     violations: list[str] = []
+    # --- strict-mode / per-turn credit assignment (2026-09-07) ---
+    reward_mode: str = "shaped"
+    # True iff at least one constraint check ran and none failed.
+    constraint_all_pass: bool = False
+    # One entry per (constraint, graded step): {turn, step_index, constraint,
+    # passed, kind, violation}. `turn` is the 1-based assistant turn, which
+    # NeMo-RL maps onto its message_log (Gym-path logs alternate user/assistant,
+    # so assistant message k is turn k+1) to push down exactly the violating
+    # turns. Lists are not promoted to metrics; the ints below are.
+    turn_verdicts: list[dict] = []
+    first_violation_turn: Optional[int] = None
+    num_graded_turns: int = 0
+    num_violating_turns: int = 0
 
 
 class SWEBenchConstrainedWrapper(SWEBenchWrapper):
@@ -92,6 +110,7 @@ class SWEBenchConstrainedWrapper(SWEBenchWrapper):
             metadata,
             task_reward=base.reward,
             default_alpha=self.config.constraint_alpha,
+            default_reward_mode=self.config.reward_mode,
         )
         return SWEBenchConstrainedVerifyResponse(**(base.model_dump() | fields))
 

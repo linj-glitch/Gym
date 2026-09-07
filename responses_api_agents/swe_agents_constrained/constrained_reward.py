@@ -28,7 +28,7 @@ from responses_api_agents.swe_agents_constrained.grading import (
     grade_constraints,
     parse_trajectory,
 )
-from responses_api_agents.swe_agents_constrained.grading.reward import TrainingMode, _DEFAULT_ALPHA
+from responses_api_agents.swe_agents_constrained.grading.reward import _DEFAULT_ALPHA, TrainingMode
 
 
 log = logging.getLogger(__name__)
@@ -53,11 +53,15 @@ def coerce_constraint_declarations(raw: list) -> list[dict]:
     return declarations
 
 
+REWARD_MODES = ("shaped", "strict")
+
+
 def grade_and_shape(
     output_items: Any,
     metadata: dict[str, str],
     task_reward: float,
     default_alpha: float,
+    default_reward_mode: str = "shaped",
 ) -> dict[str, Any]:
     """Grade a completed trajectory and shape the task reward.
 
@@ -65,8 +69,24 @@ def grade_and_shape(
     overlay on the base verify response. Grading failures never crash the
     rollout: the task reward passes through unshaped and the error is recorded
     in ``violations``.
+
+    reward_mode (config default, overridable per row via metadata):
+      "shaped": reward = task * (1 + alpha * constraint_fraction)   (original)
+      "strict": reward = task * 1[every applicable constraint passed at every
+                applicable turn]. A single violation anywhere zeroes the
+                trace; a trace where no constraint was gradeable (no applicable
+                turn) also earns 0 -- "not measured" is not compliance, and a
+                vacuous pass would reward avoiding the trigger. Task failure
+                is 0 in both modes.
+
+    Per-turn verdicts (``turn_verdicts``, 1-based assistant turn index, from
+    the grading core's StepVerdicts) are always emitted so the trainer can
+    assign credit to the turns that carried a failing check.
     """
     alpha = float(metadata.get("constraint_alpha", default_alpha))
+    reward_mode = str(metadata.get("reward_mode", default_reward_mode))
+    if reward_mode not in REWARD_MODES:
+        raise ValueError(f"reward_mode must be one of {REWARD_MODES}, got {reward_mode!r}")
     fields: dict[str, Any] = {
         "reward": task_reward,
         "reward_components": {"task": task_reward},
@@ -74,6 +94,12 @@ def grade_and_shape(
         "constraint_reward": None,
         "constraint_graded": False,
         "constraint_alpha": alpha,
+        "reward_mode": reward_mode,
+        "constraint_all_pass": False,
+        "turn_verdicts": [],
+        "first_violation_turn": None,
+        "num_graded_turns": 0,
+        "num_violating_turns": 0,
     }
 
     try:
@@ -99,14 +125,43 @@ def grade_and_shape(
         fields["violations"] = [f"constraint grading error: {e}"]
         return fields
 
+    turn_verdicts = [
+        {
+            "turn": v.turn,
+            "step_index": v.step_index,
+            "constraint": v.constraint,
+            "passed": bool(v.passed),
+            "kind": v.kind,
+            "violation": v.violation,
+        }
+        for v in grading.step_verdicts
+    ]
+    violating_turns = sorted({v.turn for v in grading.step_verdicts if not v.passed})
+    graded_turns = sorted({v.turn for v in grading.step_verdicts})
+    all_pass = bool(grading.step_verdicts) and not violating_turns
+
     fields.update(
         constraint_graded=grading.any_graded,
         constraint_results=grading.constraint_results,
         constraint_scores=grading.constraint_scores,
         constraint_applicable=grading.constraint_applicable,
         violations=grading.violations,
+        constraint_all_pass=all_pass,
+        turn_verdicts=turn_verdicts,
+        first_violation_turn=(violating_turns[0] if violating_turns else None),
+        num_graded_turns=len(graded_turns),
+        num_violating_turns=len(violating_turns),
     )
-    if grading.any_graded:
+    if reward_mode == "strict":
+        # Binary conjunction inside the task gate. constraint_reward is reported
+        # as the fraction (diagnostic) but the reward itself is 0/1.
+        fields["reward"] = task_reward * (1.0 if all_pass else 0.0)
+        fields["constraint_reward"] = grading.reward if grading.any_graded else 0.0
+        fields["reward_components"]["constraint"] = 1.0 if all_pass else 0.0
+        for name, score in grading.constraint_scores.items():
+            if grading.constraint_applicable.get(name):
+                fields["reward_components"][f"constraint_{name}"] = score
+    elif grading.any_graded:
         fields["reward"] = compute_reward(task_reward, grading.reward, alpha=alpha).total
         fields["constraint_reward"] = grading.reward
         fields["reward_components"]["constraint"] = grading.reward

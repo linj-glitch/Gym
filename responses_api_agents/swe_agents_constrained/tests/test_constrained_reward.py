@@ -132,3 +132,88 @@ class TestGradeAndShape:
         fields = grade_and_shape(_trajectory(True), _metadata(constraints), task_reward=1.0, default_alpha=1.0)
         assert "constraint_no_force_git_commands" in fields["reward_components"]
         assert "constraint_no_secret_literals_in_code" in fields["reward_components"]
+
+
+class TestStrictRewardMode:
+    """reward_mode=strict: task gate, then binary all-pass; per-turn verdicts emitted."""
+
+    INTENT = [{"type": "tool_call_intent_tag", "params": {}}]
+
+    def _strict(self, trajectory, constraints, task_reward=1.0, **meta):
+        return grade_and_shape(
+            trajectory,
+            _metadata(constraints, **meta),
+            task_reward=task_reward,
+            default_alpha=1.0,
+            default_reward_mode="strict",
+        )
+
+    def test_default_mode_is_shaped(self):
+        fields = grade_and_shape(_trajectory(True), _metadata(self.INTENT), task_reward=1.0, default_alpha=1.0)
+        assert fields["reward_mode"] == "shaped"
+        assert fields["reward"] == 2.0
+
+    def test_compliant_solved_trace_scores_one(self):
+        fields = self._strict(_trajectory(True), self.INTENT)
+        assert fields["reward"] == 1.0
+        assert fields["constraint_all_pass"] is True
+        assert fields["num_violating_turns"] == 0
+        assert fields["first_violation_turn"] is None
+        assert fields["num_graded_turns"] >= 1
+
+    def test_any_violation_zeroes_a_solved_trace(self):
+        fields = self._strict(_trajectory(False), self.INTENT)
+        assert fields["reward"] == 0.0
+        assert fields["constraint_all_pass"] is False
+        assert fields["num_violating_turns"] >= 1
+        assert fields["first_violation_turn"] is not None
+        # the shaped mode would still have paid the task reward here
+        shaped = grade_and_shape(_trajectory(False), _metadata(self.INTENT), task_reward=1.0, default_alpha=1.0)
+        assert shaped["reward"] >= 1.0
+
+    def test_task_failure_is_zero_regardless_of_compliance(self):
+        fields = self._strict(_trajectory(True), self.INTENT, task_reward=0.0)
+        assert fields["reward"] == 0.0
+        assert fields["constraint_all_pass"] is True
+
+    def test_turn_verdicts_are_attributed_to_turns(self):
+        fields = self._strict(_trajectory(False), self.INTENT)
+        verdicts = fields["turn_verdicts"]
+        assert verdicts and all({"turn", "step_index", "constraint", "passed", "kind"} <= set(v) for v in verdicts)
+        assert all(v["constraint"] == "tool_call_intent_tag" for v in verdicts)
+        failing_turns = {v["turn"] for v in verdicts if not v["passed"]}
+        assert failing_turns
+        assert fields["first_violation_turn"] == min(failing_turns)
+        assert fields["num_violating_turns"] == len(failing_turns)
+        assert all(isinstance(v["turn"], int) and v["turn"] >= 1 for v in verdicts)
+
+    def test_ungradeable_constraint_earns_nothing_in_strict_mode(self):
+        # A FINAL_OUTPUT-scoped constraint with no gradeable step: shaped mode
+        # drops the term and pays the task reward; strict mode refuses the
+        # vacuous pass.
+        constraints = [{"type": "no_force_git_commands", "params": {}}]
+        bare = [_tool_call("execute_bash", "c1", json.dumps({"command": "ls"})), _tool_output("c1", "ok")]
+        strict = self._strict(bare, constraints)
+        shaped = grade_and_shape(bare, _metadata(constraints), task_reward=1.0, default_alpha=1.0)
+        if not strict["constraint_graded"]:
+            assert strict["reward"] == 0.0
+            assert shaped["reward"] == 1.0
+        else:  # the constraint did find something to grade; strict is then just all-pass
+            assert strict["reward"] == (1.0 if strict["constraint_all_pass"] else 0.0)
+
+    def test_metadata_can_override_mode_per_row(self):
+        fields = grade_and_shape(
+            _trajectory(False), _metadata(self.INTENT, reward_mode="strict"), task_reward=1.0, default_alpha=1.0
+        )
+        assert fields["reward_mode"] == "strict"
+        assert fields["reward"] == 0.0
+
+    def test_unknown_mode_is_rejected(self):
+        with pytest.raises(ValueError):
+            grade_and_shape(
+                _trajectory(True),
+                _metadata(self.INTENT),
+                task_reward=1.0,
+                default_alpha=1.0,
+                default_reward_mode="bogus",
+            )
