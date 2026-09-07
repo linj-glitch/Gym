@@ -3185,6 +3185,26 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
             mount_args.append(f"--mount type=bind,src={miniforge3_path},dst=/openhands_setup/miniforge3,ro")
             mount_args.append(f"--mount type=bind,src={miniforge3_path},dst={miniforge3_path},ro")
 
+            # The setup dir may be reached through a symlink (e.g. a training
+            # launch's Gym snapshot links swe_openhands_setup/ to a shared
+            # checkout). miniforge's console-script wrappers (poetry, ...) and
+            # the OpenHands .venv exec the interpreter by the ABSOLUTE REAL
+            # path recorded at install time, so that real path must exist
+            # inside the sandbox too -- otherwise every agent run dies with
+            # "exec: .../miniforge3/bin/python3.12: not found" (rc 127).
+            real_setup = Path(os.path.realpath(params.openhands_setup_dir))
+            if real_setup != Path(params.openhands_setup_dir):
+                real_oh = real_setup / "OpenHands"
+                mount_args.extend(
+                    [
+                        f"--mount type=bind,src={real_setup / 'miniforge3'},dst={real_setup / 'miniforge3'},ro",
+                        f"--mount type=bind,src={real_oh},dst={real_oh},ro",
+                        f"--mount type=bind,src={real_oh}/.eval_sessions,dst={real_oh}/.eval_sessions",
+                        f"--mount type=bind,src={real_oh}/logs,dst={real_oh}/logs",
+                        f"--mount type=bind,src={real_oh}/evaluation/oh,dst={real_oh}/evaluation/oh",
+                    ]
+                )
+
         # Add SWE-bench setup directory mount if available (for evaluation)
         # swe-bench-ext, nv-internal-1, and deepswe don't use the swebench harness
         if command.mode == "eval" and data_point["dataset_name"] not in ("nv-internal-1", "swe-bench-ext", "deepswe"):
