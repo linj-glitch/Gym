@@ -249,7 +249,11 @@ class TestTieredRewardMode:
         assert fields["reward_components"]["constraint"] == 0.5
         # the same trace is 0 under strict and >= 1 under shaped
         strict = grade_and_shape(
-            _trajectory(False), _metadata(self.INTENT), task_reward=1.0, default_alpha=1.0, default_reward_mode="strict"
+            _trajectory(False),
+            _metadata(self.INTENT),
+            task_reward=1.0,
+            default_alpha=1.0,
+            default_reward_mode="strict",
         )
         assert strict["reward"] == 0.0
 
