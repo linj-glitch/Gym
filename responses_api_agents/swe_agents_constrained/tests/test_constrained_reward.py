@@ -217,3 +217,76 @@ class TestStrictRewardMode:
                 default_alpha=1.0,
                 default_reward_mode="bogus",
             )
+
+
+class TestTieredRewardMode:
+    """reward_mode=tiered: task fail 0; solved -> partial; solved + all-pass -> 1."""
+
+    INTENT = [{"type": "tool_call_intent_tag", "params": {}}]
+
+    def _tiered(self, trajectory, constraints, task_reward=1.0, partial=0.5, **meta):
+        return grade_and_shape(
+            trajectory,
+            _metadata(constraints, **meta),
+            task_reward=task_reward,
+            default_alpha=1.0,
+            default_reward_mode="tiered",
+            default_partial_reward=partial,
+        )
+
+    def test_compliant_solved_trace_scores_one(self):
+        fields = self._tiered(_trajectory(True), self.INTENT)
+        assert fields["reward"] == 1.0
+        assert fields["constraint_all_pass"] is True
+        assert fields["reward_components"]["constraint"] == 1.0
+        assert fields["success_partial_reward"] == 0.5
+
+    def test_violating_solved_trace_keeps_partial_credit(self):
+        fields = self._tiered(_trajectory(False), self.INTENT)
+        assert fields["reward"] == 0.5
+        assert fields["constraint_all_pass"] is False
+        assert fields["num_violating_turns"] >= 1
+        assert fields["reward_components"]["constraint"] == 0.5
+        # the same trace is 0 under strict and >= 1 under shaped
+        strict = grade_and_shape(
+            _trajectory(False), _metadata(self.INTENT), task_reward=1.0, default_alpha=1.0, default_reward_mode="strict"
+        )
+        assert strict["reward"] == 0.0
+
+    def test_task_failure_is_zero_even_when_compliant(self):
+        fields = self._tiered(_trajectory(True), self.INTENT, task_reward=0.0)
+        assert fields["reward"] == 0.0
+        assert fields["constraint_all_pass"] is True
+
+    def test_partial_credit_scales_with_task_reward(self):
+        fields = self._tiered(_trajectory(False), self.INTENT, task_reward=0.5)
+        assert fields["reward"] == 0.25
+
+    def test_partial_is_configurable_and_overridable_per_row(self):
+        assert self._tiered(_trajectory(False), self.INTENT, partial=0.3)["reward"] == pytest.approx(0.3)
+        row = self._tiered(_trajectory(False), self.INTENT, partial=0.3, success_partial_reward="0.7")
+        assert row["reward"] == pytest.approx(0.7)
+        assert row["success_partial_reward"] == pytest.approx(0.7)
+
+    def test_partial_outside_unit_interval_is_rejected(self):
+        with pytest.raises(ValueError):
+            self._tiered(_trajectory(True), self.INTENT, partial=1.5)
+
+    def test_ungradeable_constraint_earns_partial_only(self):
+        # No gradeable step: not compliance, so no all-pass bonus -- but the
+        # task was solved, so the partial credit stays (strict would give 0).
+        constraints = [{"type": "no_force_git_commands", "params": {}}]
+        bare = [_tool_call("execute_bash", "c1", json.dumps({"command": "ls"})), _tool_output("c1", "ok")]
+        fields = self._tiered(bare, constraints)
+        if not fields["constraint_graded"]:
+            assert fields["reward"] == 0.5
+        else:
+            assert fields["reward"] == (1.0 if fields["constraint_all_pass"] else 0.5)
+
+    def test_strict_and_shaped_fields_untouched(self):
+        strict = grade_and_shape(
+            _trajectory(True), _metadata(self.INTENT), task_reward=1.0, default_alpha=1.0, default_reward_mode="strict"
+        )
+        assert strict["success_partial_reward"] == 0.0
+        shaped = grade_and_shape(_trajectory(True), _metadata(self.INTENT), task_reward=1.0, default_alpha=1.0)
+        assert shaped["reward"] == 2.0

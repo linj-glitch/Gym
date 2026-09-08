@@ -53,7 +53,8 @@ def coerce_constraint_declarations(raw: list) -> list[dict]:
     return declarations
 
 
-REWARD_MODES = ("shaped", "strict")
+REWARD_MODES = ("shaped", "strict", "tiered")
+DEFAULT_PARTIAL_REWARD = 0.5
 
 
 def grade_and_shape(
@@ -62,6 +63,7 @@ def grade_and_shape(
     task_reward: float,
     default_alpha: float,
     default_reward_mode: str = "shaped",
+    default_partial_reward: float = DEFAULT_PARTIAL_REWARD,
 ) -> dict[str, Any]:
     """Grade a completed trajectory and shape the task reward.
 
@@ -76,8 +78,16 @@ def grade_and_shape(
                 applicable turn]. A single violation anywhere zeroes the
                 trace; a trace where no constraint was gradeable (no applicable
                 turn) also earns 0 -- "not measured" is not compliance, and a
-                vacuous pass would reward avoiding the trigger. Task failure
-                is 0 in both modes.
+                vacuous pass would reward avoiding the trigger.
+      "tiered": task fail -> 0; task solved -> ``partial`` (default 0.5);
+                task solved AND every applicable constraint passed at every
+                applicable turn -> 1. Same all-pass predicate as strict, but a
+                solved-yet-violating trace keeps partial credit so the task
+                signal survives (Lin, 2026-09-07: strict left 0-14 positives
+                per 128 samples and no gradient toward solving). ``partial``
+                comes from ``success_partial_reward`` in the config, overridable
+                per row via metadata ``success_partial_reward``.
+      Task failure is 0 in every mode.
 
     Per-turn verdicts (``turn_verdicts``, 1-based assistant turn index, from
     the grading core's StepVerdicts) are always emitted so the trainer can
@@ -87,6 +97,9 @@ def grade_and_shape(
     reward_mode = str(metadata.get("reward_mode", default_reward_mode))
     if reward_mode not in REWARD_MODES:
         raise ValueError(f"reward_mode must be one of {REWARD_MODES}, got {reward_mode!r}")
+    partial = float(metadata.get("success_partial_reward", default_partial_reward))
+    if not 0.0 <= partial <= 1.0:
+        raise ValueError(f"success_partial_reward must be in [0, 1], got {partial!r}")
     fields: dict[str, Any] = {
         "reward": task_reward,
         "reward_components": {"task": task_reward},
@@ -152,12 +165,15 @@ def grade_and_shape(
         num_graded_turns=len(graded_turns),
         num_violating_turns=len(violating_turns),
     )
-    if reward_mode == "strict":
-        # Binary conjunction inside the task gate. constraint_reward is reported
-        # as the fraction (diagnostic) but the reward itself is 0/1.
-        fields["reward"] = task_reward * (1.0 if all_pass else 0.0)
+    if reward_mode in ("strict", "tiered"):
+        # Conjunction inside the task gate. constraint_reward is reported as
+        # the fraction (diagnostic); the reward itself is task * {0|partial, 1}
+        # (strict: partial = 0; tiered: partial = success_partial_reward).
+        gate = 1.0 if all_pass else (partial if reward_mode == "tiered" else 0.0)
+        fields["reward"] = task_reward * gate
         fields["constraint_reward"] = grading.reward if grading.any_graded else 0.0
-        fields["reward_components"]["constraint"] = 1.0 if all_pass else 0.0
+        fields["reward_components"]["constraint"] = gate
+        fields["success_partial_reward"] = partial if reward_mode == "tiered" else 0.0
         for name, score in grading.constraint_scores.items():
             if grading.constraint_applicable.get(name):
                 fields["reward_components"][f"constraint_{name}"] = score

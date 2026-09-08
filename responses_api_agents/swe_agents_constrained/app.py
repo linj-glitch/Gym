@@ -54,6 +54,7 @@ from responses_api_agents.swe_agents.app import (
 )
 from responses_api_agents.swe_agents_constrained.constrained_reward import (
     DEFAULT_CONSTRAINT_ALPHA,
+    DEFAULT_PARTIAL_REWARD,
     grade_and_shape,
 )
 
@@ -64,7 +65,10 @@ class SWEBenchConstrainedWrapperConfig(SWEBenchWrapperConfig):
     # "strict": reward = task * 1[all applicable constraints passed at every
     # applicable turn]; task failure and any violation both give 0 (Lin,
     # 2026-09-07 -- e2e GRPO recipe). Per-row metadata `reward_mode` overrides.
+    # "tiered": task fail 0; task solved success_partial_reward; task solved AND
+    # all constraints passed 1 (Lin, 2026-09-07: strict starved the task signal).
     reward_mode: str = "shaped"
+    success_partial_reward: float = DEFAULT_PARTIAL_REWARD
 
 
 class SWEBenchConstrainedVerifyResponse(SWEBenchVerifyResponse, BaseMultiRewardVerifyResponse):
@@ -97,6 +101,8 @@ class SWEBenchConstrainedVerifyResponse(SWEBenchVerifyResponse, BaseMultiRewardV
     first_violation_turn: Optional[int] = None
     num_graded_turns: int = 0
     num_violating_turns: int = 0
+    # tiered mode: the credit a solved-but-violating trace keeps (0.0 otherwise).
+    success_partial_reward: float = 0.0
 
 
 class SWEBenchConstrainedWrapper(SWEBenchWrapper):
@@ -111,6 +117,7 @@ class SWEBenchConstrainedWrapper(SWEBenchWrapper):
             task_reward=base.reward,
             default_alpha=self.config.constraint_alpha,
             default_reward_mode=self.config.reward_mode,
+            default_partial_reward=self.config.success_partial_reward,
         )
         return SWEBenchConstrainedVerifyResponse(**(base.model_dump() | fields))
 
