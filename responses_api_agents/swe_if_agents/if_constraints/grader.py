@@ -129,8 +129,24 @@ def prefix_turn_count(input_items: List[dict], output_items: List[dict]) -> Tupl
     if not pre:
         return 0, "no prefix in input", False
     out = segment(output_items)
-    sig = lambda s: [n for n, _ in s["calls"]]  # noqa: E731
     n = len(pre)
+    # Exact test first (2026-09-08): a replayed prefix carries the recorded call_ids, and a live continuation gets
+    # fresh ids, so the prefix is at the head of the output iff the first n output turns carry the prefix's call_ids.
+    # The name-sequence heuristic below is kept only for recordings without call_ids; on its own it skipped live
+    # continuation turns whose leading tool names happened to repeat the prefix's (bash, bash, ...).
+    pre_ids = [cid for t in pre for cid in t["call_ids"] if cid]
+    out_ids = [cid for t in out for cid in t["call_ids"] if cid]
+    if pre_ids and out_ids:
+        if len(out) >= n and all(out[i]["call_ids"] == pre[i]["call_ids"] for i in range(n)):
+            return n, f"prefix of {n} assistant turns found at the head of the output (call_ids match)", True
+        if not (set(pre_ids) & set(out_ids)):
+            return (
+                0,
+                f"row output is the continuation only (no prefix call_id appears in the output; the harness replays the "
+                f"{n}-turn prefix in-episode and records only LLM-generated turns); grading all {len(out)} continuation turns",
+                True,
+            )
+    sig = lambda s: [n_ for n_, _ in s["calls"]]  # noqa: E731
     if len(out) >= n and all(sig(out[i]) == sig(pre[i]) for i in range(n)):
         return n, f"prefix of {n} assistant turns found at the head of the output (tool-call sequence matches)", True
     # partial match: count how many leading turns agree
