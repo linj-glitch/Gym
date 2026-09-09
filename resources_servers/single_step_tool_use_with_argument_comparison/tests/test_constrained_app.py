@@ -313,3 +313,100 @@ class TestVerifierRewardMode:
         verifier = await self._verify(_server(reward_mode="verifier"), expected, response, metadata=self.META)
         assert pivot.reward == approx(0.0)
         assert verifier.reward == approx(1.0)
+
+
+class TestTemplateFamily:
+    """Template-family constraints (recipe verifier_parameter in `constraint_params`) grade through the
+    swe_if_agents grader on the same prefix+sampled surface, and decide the reward exactly like detailed ones."""
+
+    ANY_TURN_BAN = json.dumps({"template": "turn_output", "trigger": {"position": "any_turn"},
+                               "obligation": {"match": "forbidden", "value": "FROBNICATE"}})
+    FINAL_PREFIX = json.dumps({"template": "turn_output", "trigger": {"position": "final"},
+                               "obligation": {"match": "prefix", "value": "SUMMARY:"}})
+
+    @staticmethod
+    def _prefix_params(metadata, *, open_turn=False):
+        """A replayed prefix: system, user, one assistant narration + tool call + tool result (closed turn);
+        with open_turn=True the prefix ends in a narration that has not been answered yet."""
+        from nemo_gym.openai_utils import NeMoGymFunctionCallOutput
+
+        items = [
+            NeMoGymEasyInputMessage(role="system", content="neutral"),
+            NeMoGymEasyInputMessage(role="user", content="Edit a.py."),
+            NeMoGymResponseOutputMessage(id="p1", type="message", role="assistant", status="completed",
+                                         content=[NeMoGymResponseOutputText(type="output_text", text="Looking at a.py.", annotations=[])]),
+            NeMoGymResponseFunctionToolCall(type="function_call", call_id="pc1", name="execute_bash", arguments=json.dumps({"command": "cat a.py"})),
+            NeMoGymFunctionCallOutput(type="function_call_output", call_id="pc1", output="print(1)"),
+        ]
+        if open_turn:
+            items.append(NeMoGymResponseOutputMessage(id="p2", type="message", role="assistant", status="completed",
+                                                      content=[NeMoGymResponseOutputText(type="output_text", text="I will FROBNICATE it now.", annotations=[])]))
+        return NeMoGymResponseCreateParamsNonStreaming(input=items, metadata=metadata)
+
+    async def _verify(self, server, expected, response, params):
+        return await server.verify(
+            ConstrainedBinaryPivotVerifyRequest(responses_create_params=params, response=response, expected_action=expected)
+        )
+
+    def test_family_is_stamped_or_inferred(self):
+        srv = _server()
+        assert srv._row_family({"family": "template", "constraint": "x#c1", "constraint_params": "{}"}) == "template"
+        assert srv._row_family({"constraint": "x#c1", "constraint_params": self.ANY_TURN_BAN}) == "template"
+        assert srv._row_family({"constraint": "single_tool_call_per_message", "constraint_params": "{}"}) == "detailed"
+        assert srv._row_family({"constraint": "step_summary_prefix", "constraint_params": json.dumps({"prefix": "Observed:"})}) == "detailed"
+
+    async def test_pivot_reward_requires_match_and_template_pass(self):
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        md = {"family": "template", "constraint": "t#c1", "constraint_params": self.ANY_TURN_BAN}
+        clean = await self._verify(_server(), expected, _response(_message("Applying the fix."), _call()), self._prefix_params(md))
+        assert clean.reward == approx(1.0) and clean.matched and clean.constraint_verdict is ConstraintVerdict.PASS
+        assert clean.constraint_family == "template" and clean.constraint_passed and clean.constraint_graded
+        dirty = await self._verify(_server(), expected, _response(_message("Let me FROBNICATE this."), _call()), self._prefix_params(md))
+        assert dirty.reward == approx(0.0) and dirty.matched and dirty.constraint_verdict is ConstraintVerdict.FAIL
+        assert dirty.constraint_failed and not dirty.constraint_passed
+
+    async def test_prefix_violation_does_not_count_only_the_sampled_turn_does(self):
+        """The prefix narration says FROBNICATE (closed turn); the sampled turn is clean -> PASS."""
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        md = {"family": "template", "constraint": "t#c1", "constraint_params": self.ANY_TURN_BAN}
+        params = self._prefix_params(md)
+        params.input[2] = NeMoGymResponseOutputMessage(id="p1", type="message", role="assistant", status="completed",
+                                                       content=[NeMoGymResponseOutputText(type="output_text", text="I will FROBNICATE a.py.", annotations=[])])
+        out = await self._verify(_server(), expected, _response(_message("Applying the fix."), _call()), params)
+        assert out.reward == approx(1.0) and out.constraint_verdict is ConstraintVerdict.PASS
+
+    async def test_open_prefix_turn_merges_with_the_sampled_call(self):
+        """A prefix ending in an unanswered narration merges with the sampled call into ONE turn, which is a branch
+        turn (same rule as the detailed path): the merged turn carries the ban word -> FAIL."""
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        md = {"family": "template", "constraint": "t#c1", "constraint_params": self.ANY_TURN_BAN}
+        out = await self._verify(_server(), expected, _response(_call()), self._prefix_params(md, open_turn=True))
+        assert out.matched and out.constraint_verdict is ConstraintVerdict.FAIL and out.reward == approx(0.0)
+
+    async def test_final_constraint_on_message_kind_expected_action(self):
+        expected = ExpectedMessage(type="message", content="SUMMARY: done")
+        md = {"family": "template", "constraint": "t#c2", "constraint_params": self.FINAL_PREFIX}
+        good = await self._verify(_server(), expected, _response(_message("SUMMARY: fixed a.py")), self._prefix_params(md))
+        assert good.reward == approx(1.0) and good.constraint_verdict is ConstraintVerdict.PASS
+        bad = await self._verify(_server(), expected, _response(_message("Fixed a.py, all good.")), self._prefix_params(md))
+        assert bad.reward == approx(0.0) and bad.matched and bad.constraint_verdict is ConstraintVerdict.FAIL
+        # a tool call where a message was demonstrated: kind mismatch. The recipe's no-answer ruling for a required
+        # shape (`no_answer: fail`): an episode with no final message FAILS its final-message rule once.
+        call = await self._verify(_server(always_grade_constraint=True), expected, _response(_call()), self._prefix_params(md))
+        assert not call.matched and call.constraint_verdict is ConstraintVerdict.FAIL and call.reward == approx(0.0)
+
+    async def test_verifier_mode_ignores_the_teacher_action(self):
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        md = {"family": "template", "constraint": "t#c1", "constraint_params": self.ANY_TURN_BAN}
+        srv = _server(reward_mode="verifier")
+        wrong_tool_clean = await self._verify(srv, expected, _response(_message("Checking."), _call(name="execute_bash", arguments="{}")), self._prefix_params(md))
+        assert not wrong_tool_clean.matched and wrong_tool_clean.reward == approx(1.0)
+        right_tool_dirty = await self._verify(srv, expected, _response(_message("FROBNICATE!"), _call()), self._prefix_params(md))
+        assert right_tool_dirty.matched and right_tool_dirty.reward == approx(0.0)
+
+    async def test_unknown_matcher_is_ungraded_not_a_crash(self):
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        bad_vp = json.dumps({"template": "turn_output", "trigger": {"position": "any_turn"}, "obligation": {"match": "no_such_matcher", "value": 1}})
+        md = {"family": "template", "constraint": "t#c9", "constraint_params": bad_vp}
+        out = await self._verify(_server(), expected, _response(_call()), self._prefix_params(md))
+        assert out.matched and out.constraint_verdict is ConstraintVerdict.UNGRADED and out.reward == approx(0.0)
