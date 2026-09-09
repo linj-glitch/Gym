@@ -12,7 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Constraint grading core — single source of truth.
+"""Constraint grading core — single source of truth for the DETAILED constraint family.
+
+Family note (2026-09-08): this package is the runtime of the *detailed* family (hand-written registry,
+one verifier per constraint id). It is a benchmark family; RL training data now comes from the *template*
+family implemented in ``responses_api_agents/swe_if_agents/if_constraints/``. The agentic-if repo adapts
+both to one interface (``instruction_pool/constraint_families/``).
 
 Constraint semantics (registries + injectable instruction text), deterministic
 verifiers, trajectory grading, and the shaped reward formula::
