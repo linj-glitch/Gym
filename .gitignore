@@ -213,6 +213,8 @@ tests/data
 # Convenience files
 run.md
 temp*
+# the constraint verifier's template registry is a source file, not a temp file (was silently untracked)
+!responses_api_agents/swe_if_agents/if_constraints/verifier/templates.py
 
 .DS_Store
 
