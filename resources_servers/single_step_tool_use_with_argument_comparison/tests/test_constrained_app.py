@@ -223,6 +223,44 @@ class TestConstrainedDiagnostics:
         assert not off.constraint_graded
         assert on.constraint_graded or on.constraint_ungraded or on.constraint_absent
 
+    async def test_parallel_calls_are_a_kind_mismatch(self, server) -> None:
+        """The belt's gate (pivot_branch_probe._branch_match: len(tool_calls) != 1 -> kind_mismatch) rejects a turn
+        that emits the teacher's call plus another; judging only the first call would let extra, never-executed calls
+        ride along for free."""
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        out = await self._verify(
+            server, expected, _response(_message("Editing."), _call(), _call(name="execute_bash", arguments=json.dumps({"command": "ls"})))
+        )
+        assert not out.matched and out.match_fail_kind and out.reward == approx(0.0)
+        flags = ("match_fail_kind", "match_fail_invalid_output", "match_fail_tool_name", "match_fail_target", "match_fail_similarity")
+        assert sum(getattr(out, f) for f in flags) == 1
+        assert out.argument_similarity is None and not out.similarity_evaluated
+        # exactly one call, even preceded by narration, still matches
+        one = await self._verify(server, expected, _response(_message("Editing."), _call()))
+        assert one.matched
+        # a message-kind demonstration is unaffected: no call at all still matches, any call is the kind mismatch
+        msg = await self._verify(server, ExpectedMessage(type="message", content="done"), _response(_message()))
+        assert msg.matched
+
+    async def test_constraint_family_is_reported_when_grading_is_skipped(self, server) -> None:
+        """constraint_family is a metadata lookup, so an unmatched rollout (verifier not run) keeps its family; ""
+        means the row has no constraint — unlike the constraint_* bools, which are all False when not graded."""
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        template_md = {
+            "family": "template",
+            "constraint": "t#c1",
+            "constraint_params": json.dumps({"template": "turn_output", "trigger": {"position": "any_turn"}, "obligation": {"match": "forbidden", "value": "X"}}),
+        }
+        for md, fam in (
+            (template_md, "template"),
+            ({"constraint": "single_tool_call_per_message", "constraint_params": "{}"}, "detailed"),
+            ({}, ""),
+        ):
+            out = await self._verify(server, expected, _response(_call(name="execute_bash", arguments="{}")), metadata=md)
+            assert not out.matched and out.reward == approx(0.0)
+            assert out.constraint_family == fam, (md, out.constraint_family)
+            assert not (out.constraint_passed or out.constraint_failed or out.constraint_ungraded or out.constraint_absent)
+
 
 class TestVerifierRewardMode:
     """reward_mode=verifier: the constraint verdict on the model's own action is
@@ -280,13 +318,17 @@ class TestVerifierRewardMode:
         assert out.reward == approx(0.0)
 
     async def test_fail_earns_nothing_even_when_teacher_matched(self, server) -> None:
-        """Two tool calls in one message violate single_tool_call_per_message."""
+        """Two tool calls in one message violate single_tool_call_per_message. (Since the belt's kind rule was
+        mirrored, two calls are also a kind_mismatch on the match axis; the verifier verdict is what decides here.)"""
         expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
         out = await self._verify(server, expected, _response(_call(), _call()), metadata=self.META)
-        assert out.matched
+        assert not out.matched and out.match_fail_kind
         assert out.constraint_graded
         assert out.constraint_verdict is ConstraintVerdict.FAIL
         assert out.reward == approx(0.0)
+        # the same verdict on a single matching call
+        single = await self._verify(server, expected, _response(_call()), metadata=self.META)
+        assert single.matched and single.constraint_verdict is ConstraintVerdict.FAIL and single.reward == approx(0.0)
 
     async def test_row_without_constraint_earns_nothing(self, server) -> None:
         """No declaration -> nothing to verify -> 0.0 (pivot mode would give 1.0)."""
@@ -382,6 +424,44 @@ class TestTemplateFamily:
         md = {"family": "template", "constraint": "t#c1", "constraint_params": self.ANY_TURN_BAN}
         out = await self._verify(_server(), expected, _response(_call()), self._prefix_params(md, open_turn=True))
         assert out.matched and out.constraint_verdict is ConstraintVerdict.FAIL and out.reward == approx(0.0)
+
+    async def test_empty_text_trailing_prefix_message_does_not_reopen_the_closed_turn(self):
+        """A trailing assistant message with no visible text (what _pivot_common emits for a content-less history
+        message) opens no turn in the grader's segmenter, so the sampled action starts a fresh turn: the CLOSED prefix
+        turn's violation must not be charged to a clean sampled action. Openness is asked of the segmenter, not read
+        off the last item's type."""
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        md = {"family": "template", "constraint": "t#c1", "constraint_params": self.ANY_TURN_BAN}
+        params = self._prefix_params(md)
+        params.input[2] = NeMoGymResponseOutputMessage(id="p1", type="message", role="assistant", status="completed",
+                                                       content=[NeMoGymResponseOutputText(type="output_text", text="I will FROBNICATE a.py.", annotations=[])])
+        params.input.append(NeMoGymResponseOutputMessage(id="p2", type="message", role="assistant", status="completed",
+                                                         content=[NeMoGymResponseOutputText(type="output_text", text="", annotations=[])]))
+        prefix = [i.model_dump() for i in params.input]
+        sampled = [i.model_dump() for i in (_message("Applying the fix."), _call())]
+        assert ConstrainedBinaryPivotResourcesServer._branch_turns_template(prefix, sampled) == {1}
+        out = await self._verify(_server(), expected, _response(_message("Applying the fix."), _call()), params)
+        assert out.matched and out.constraint_verdict is ConstraintVerdict.PASS and out.reward == approx(1.0)
+        # the genuinely open prefix (narration with text) still merges: branch set is the merged last turn
+        open_params = self._prefix_params(md, open_turn=True)
+        open_prefix = [i.model_dump() for i in open_params.input]
+        assert ConstrainedBinaryPivotResourcesServer._branch_turns_template(open_prefix, [_call().model_dump()]) == {1}
+        # and a prefix with no tool result at all is one open turn that the sampled call joins
+        narration_only = [i.model_dump() for i in open_params.input[:3]]
+        assert ConstrainedBinaryPivotResourcesServer._branch_turns_template(narration_only, [_call().model_dump()]) == {0}
+
+    async def test_parallel_calls_do_not_earn_reward_on_template_rows(self):
+        """The template family has no single-call constraint of its own, so the belt's kind rule is the only thing
+        keeping a clean-narration + teacher-call + extra-call turn from scoring 1.0."""
+        expected = ExpectedFunctionCall(type="function_call", name="str_replace_editor", arguments=EXPECTED_ARGS)
+        md = {"family": "template", "constraint": "t#c1", "constraint_params": self.ANY_TURN_BAN}
+        out = await self._verify(
+            _server(), expected,
+            _response(_message("Applying the fix."), _call(), _call(name="execute_bash", arguments=json.dumps({"command": "ls"}))),
+            self._prefix_params(md),
+        )
+        assert not out.matched and out.match_fail_kind and out.reward == approx(0.0)
+        assert out.constraint_family == "template"
 
     async def test_final_constraint_on_message_kind_expected_action(self):
         expected = ExpectedMessage(type="message", content="SUMMARY: done")

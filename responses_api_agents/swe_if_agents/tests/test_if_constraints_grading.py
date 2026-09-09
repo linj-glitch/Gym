@@ -375,12 +375,26 @@ def test_verifier_package_is_complete():
 
 # ------------------------------------------------------------------ (e) app.py wiring (static)
 def test_app_py_wiring():
-    """The swe_if_agents wrapper grades in run() and attaches ONLY if_constraints; the outcome reward is untouched."""
+    """The swe_if_agents wrapper grades in run() and attaches if_constraints; `reward` is written exactly once, from
+    compute_if_reward, whose default (outcome) mode is the identity — so the benchmark path leaves the outcome reward
+    untouched, checked behaviourally below."""
+    import re
+
     src = APP_PY.read_text()
     assert "class SWEIFVerifyResponse(swe.SWEBenchVerifyResponse)" in src
     assert "if_constraints: Optional[List[Dict[str, Any]]] = None" in src
     assert "records = grade_row(" in src and "if_constraints=records" in src
-    assert "reward=" not in src.split("async def run(")[1], "run() must not recompute the reward"
+    # 2026-09-08 (reward knob, if_constraints/reward.py): the former `"reward=" not in run()` grep went vacuous once
+    # run() assigned fields["reward"]. Static: the fold is the ONLY reward assignment in run() (kwarg or item form).
+    run_src = src.split("async def run(")[1]
+    assigns = re.findall(r'(?:\["reward"\]|\breward)\s*=(?!=)', run_src)
+    assert assigns == ['["reward"] ='] and 'fields["reward"] = folded.pop("reward")' in run_src, assigns
+    # Behavioural: in outcome mode the fold returns the task verdict even when a constraint is violated.
+    from responses_api_agents.swe_if_agents.if_constraints.reward import compute_if_reward
+
+    md, output = _synthetic_row()
+    records = grade_row(md, [], output)  # t#c2 fails its second step
+    assert not records[1]["all_pass"] and compute_if_reward(records, 1.0, "outcome")["reward"] == 1.0
     assert "resolved_agent_env" in src and "write_row_templates(" in src and "tag_replay_observation_suffix(" in src
 
 

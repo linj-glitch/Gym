@@ -154,7 +154,9 @@ class ConstrainedBinaryPivotVerifyResponse(BaseVerifyResponse):
     matched: bool
     match_failure_reason: str
     constraint_verdict: ConstraintVerdict
-    # "detailed" | "template" | "" (no constraint in the row). A string: reported, not promoted to a metric.
+    # "detailed" | "template" | "" (no constraint in the row). Read from the row's metadata whether or not the
+    # verifier ran (unlike the constraint_* bools below), so unmatched rollouts keep their family. A string:
+    # reported, not promoted to a metric.
     constraint_family: str = ""
 
     # --- constraint axis (instruction following) ---
@@ -194,8 +196,19 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
 
     # ---- match axis (mirror of _pivot_match.binary_match + _branch_match) ----
 
-    def _binary_match(self, expected: dict, sampled: Optional[Any]) -> tuple[bool, str, Optional[float]]:
+    def _binary_match(
+        self, expected: dict, sampled: Optional[Any], n_calls: Optional[int] = None
+    ) -> tuple[bool, str, Optional[float]]:
         """Return (matched, failure_reason, argument_similarity_or_None).
+
+        `n_calls` is the number of function_call items in the sampled output
+        (None: unknown, only `sampled` is judged). The belt's kind rule
+        (pivot_branch_probe._branch_match: `len(branch_calls) != 1` ->
+        kind_mismatch) makes a parallel-call turn a miss even when its first
+        call matches the teacher; `sampled` alone is the first call and cannot
+        see the others. A turn with no call at all keeps the finer
+        `model_output_invalid` bucket (the belt files it under kind_mismatch
+        too; `matched` agrees either way).
 
         The similarity is reported whenever L2 was reached, pass or fail; it is
         None for rollouts rejected at L0/L1, where no similarity exists.
@@ -208,6 +221,10 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
             return False, "kind_mismatch", None
         if sampled is None or sampled.type != "function_call":
             return False, "model_output_invalid", None
+        if n_calls is not None and n_calls != 1:
+            # exactly one call was demonstrated; parallel calls are a different action kind (never executed at
+            # max_rollout_turns 1, so nothing else would ever penalise them)
+            return False, "kind_mismatch", None
         e_call = {"name": expected.get("name", ""), "arguments": expected.get("arguments", "")}
         r_call = {"name": getattr(sampled, "name", ""), "arguments": getattr(sampled, "arguments", "")}
         e_name, e_cat, e_args = extract_tool_info(e_call)
@@ -263,6 +280,12 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
         The grader's segmenter closes a turn at each tool result; a prefix ending in an open turn (narration
         without a result) merges with the sampled call into one turn, which then IS a branch turn — the same rule
         the detailed path applies through parse_trajectory's step_index >= n_prefix.
+
+        Whether the prefix's last turn is open is asked of the segmenter itself, not read off the last item's type:
+        segment() opens a turn only for visible text or a call, so a trailing assistant message with empty text
+        (the shape _pivot_common emits for a content-less history message) leaves nothing pending and the sampled
+        action starts a fresh turn — charging the previous CLOSED prefix turn to the sampled action would fail every
+        branch of the row whatever the policy did.
         """
         asst_prefix = [
             o for o in prefix_items
@@ -270,8 +293,9 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
             and not (o.get("type") == "message" and o.get("role") in ("system", "user", "developer"))
         ]
         pre = _template_segment(asst_prefix)
-        last = next((o for o in reversed(asst_prefix) if o.get("type") != "reasoning"), None)
-        prefix_open = bool(pre) and last is not None and last.get("type") in ("message", "function_call")
+        # the items after the prefix's last tool result form a pending turn iff the segmenter makes one of them
+        last_close = max((i for i, o in enumerate(asst_prefix) if o.get("type") == "function_call_output"), default=-1)
+        prefix_open = bool(pre) and bool(_template_segment(asst_prefix[last_close + 1:]))
         start = len(pre) - 1 if prefix_open else len(pre)
         n_all = len(_template_segment(asst_prefix + list(sampled_items)))
         return set(range(max(start, 0), n_all))
@@ -331,10 +355,18 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
 
         expected = _dump(body.expected_action)
         sampled = extract_tool_call_or_text(body.response)
-        matched, why, similarity = self._binary_match(expected, sampled)
+        n_calls = sum(1 for o in (body.response.output or []) if getattr(o, "type", None) == "function_call")
+        matched, why, similarity = self._binary_match(expected, sampled, n_calls=n_calls)
+
+        metadata = getattr(body.responses_create_params, "metadata", None)
+        if metadata is not None and hasattr(metadata, "model_dump"):
+            metadata = metadata.model_dump()
+        md = metadata or {}
+        # The family is a metadata lookup (no verifier cost), so it is reported for every rollout that carries a
+        # constraint, graded or not; "" means the row has no constraint.
+        family = self._row_family(md) if md.get("constraint") else ""
 
         verdict = ConstraintVerdict.NO_CONSTRAINT_IN_ROW
-        family = ""
         # Constraint grading only decides matched cases, so by default we skip
         # the cost otherwise; always_grade_constraint trades that cost for the
         # unconditional pass rate. Either way `graded` records whether the
@@ -342,14 +374,9 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
         verifier_mode = self.config.reward_mode == "verifier"
         graded = matched or self.config.always_grade_constraint or verifier_mode
         if graded:
-            metadata = getattr(body.responses_create_params, "metadata", None)
-            if metadata is not None and hasattr(metadata, "model_dump"):
-                metadata = metadata.model_dump()
-            md = metadata or {}
             if not md.get("constraint"):
                 verdict = ConstraintVerdict.NO_CONSTRAINT_IN_ROW
             else:
-                family = self._row_family(md)
                 prefix_items = [_dump(i) for i in (body.responses_create_params.input or [])]
                 sampled_items = [_dump(i) for i in (body.response.output or [])]
                 if family == "template":

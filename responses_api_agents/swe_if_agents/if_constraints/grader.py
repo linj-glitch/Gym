@@ -219,7 +219,11 @@ def _grade(
             steps, q = tv.grade_ext(
                 graded, vp, resolver=resolver
             )  # q = silent in-scope turns (no-answer count; owner ruling 2026-09-03)
-            kind = tv.no_answer_policy(vp)
+            # The no-answer kind is a property of the matcher, so it exists only for templates that grade an
+            # obligation through one (grade_ext applies the same rule: Template.applies_policy). tool_choice has no
+            # obligation.match; asking the registry for it raised 'unknown matcher None' and discarded the step.
+            template = tv.TEMPLATES.get(vp.get("template"))  # grade_ext already rejected unknown templates
+            kind = tv.no_answer_policy(vp) if (template is not None and template.applies_policy) else None
             err = None
         except ValueError as e:  # a retired or unknown matcher (e.g. `empty`, removed 2026-09-03): this constraint is not applicable, the row is not lost
             steps, q, kind, err = [], 0, None, "%s: %s" % (type(e).__name__, e)
@@ -240,7 +244,14 @@ def _grade(
                 "graded_turns": len(graded),
                 "continuation_only": continuation_only,
                 "steps": [
-                    {"turn": s.turn, "reward": s.reward, "detail": s.detail, "items": list(graded_segs[s.turn]["ids"])}
+                    {
+                        "turn": s.turn,
+                        "reward": s.reward,
+                        "detail": s.detail,
+                        # trajectory-scoped steps (tool_choice, turn -1) belong to no single turn: no items (a raw
+                        # index would alias the last turn, or raise on an output without assistant turns)
+                        "items": list(graded_segs[s.turn]["ids"]) if 0 <= s.turn < len(graded_segs) else [],
+                    }
                     for s in steps
                 ],
                 **({"error": err} if err else {}),
@@ -264,7 +275,9 @@ def grade_row(
        steps: [{turn, reward, detail, items}]}
     `turn` is the index of the graded model turn (0-based; a turn is what the model emitted between two tool results;
     prefix items count from the cut), `items` the ids of the output items that form that turn (message `id`, tool-call
-    `id`), so the step can be found in `response.output` without counting turns.
+    `id`), so the step can be found in `response.output` without counting turns. A trajectory-scoped step (template
+    `tool_choice`, always exactly one) carries `turn` -1 and `items` []. `no_answer` is the matcher's no-answer kind
+    for templates graded through a matcher (turn_output) and None otherwise.
     `n_steps` is the number of gradable steps (turns where the trigger fired), `n_pass` the number with reward 1,
     `step_avg` = n_pass / n_steps (None when the trigger never fired), `all_pass` = n_steps > 0 and n_pass == n_steps,
     `graded_turns` the number of assistant turns graded, `continuation_only` True when the row is a prefix item whose
