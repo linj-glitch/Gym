@@ -84,18 +84,21 @@ class GradedStep:
 # --------------------------------------------------------------------------- #
 # No-answer policies (what a silent in-scope turn means for a matcher)
 # --------------------------------------------------------------------------- #
-SILENT_TURN_FAILS = "fail"  # the rule needs an answer: a silent turn is a graded step with reward 0
-SILENT_TURN_NOT_GRADABLE = (
-    "ungradable"  # silence cannot violate the rule: a silent turn is not a step; only turns with text are graded
-)
+# Owner ruling 2026-09-09 (Charles): "a tool call is a tool call, a message is model output text" — a silent turn is
+# not a message and is NEVER a graded step, whatever the matcher. The two kinds below now say only what a MISSING FINAL
+# MESSAGE means for the rule (turn_output, position=final, episode ended on a tool call or an error), per the 2026-09-03
+# ruling: a rule that needs an answer has failed once; a ban / maximum / sentinel is not gradable.
+SILENT_TURN_FAILS = "fail"  # the rule needs an answer: a missing final message is a graded step with reward 0
+SILENT_TURN_NOT_GRADABLE = "ungradable"  # absence cannot violate the rule: a missing final message is not a step
 NO_ANSWER_POLICIES = (SILENT_TURN_FAILS, SILENT_TURN_NOT_GRADABLE)
 
-SILENT_DETAIL = "silent turn: no visible text (a required shape needs an answer)"
+SILENT_DETAIL = "silent turn: no visible text (a required shape needs an answer)"  # retired 2026-09-09; kept for readers of old records
 NO_FINAL_DETAIL = "no final message: the episode ended with a tool call or an error"
 
 
 def is_silent_step(step):
-    """True when a graded step failed only because the turn had no visible text (or the episode had no final message)."""
+    """True when a graded step failed only for lack of an answer: no final message (current rule), or — in records
+    graded before 2026-09-09 — a silent turn."""
     return step.detail.endswith(SILENT_DETAIL) or step.detail.endswith(NO_FINAL_DETAIL)
 
 

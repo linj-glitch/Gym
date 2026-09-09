@@ -186,9 +186,9 @@ class TestTurnOutputTriggers(unittest.TestCase):
     def test_any_tool_pseudo(self):
         c = {"template": "turn_output", "trigger": {"tool": "ANY_TOOL"},
              "obligation": {"match": "regex", "value": "."}}
-        steps = grade(self.turns, c)
-        # fires on turns 0 and 1; only the silent tool turn passes
-        self.assertEqual([(s.turn, s.reward) for s in steps], [(0, 1), (1, 0)])
+        steps, n_silent = tv.grade_ext(self.turns, c)
+        # fires on turns 0 and 1; turn 1 is a silent tool turn -> not a message, not a step (counted)
+        self.assertEqual([(s.turn, s.reward) for s in steps], [(0, 1)]); self.assertEqual(n_silent, 1)
 
     def test_arg_predicate_gates_firing(self):
         c = {"template": "turn_output",
@@ -216,6 +216,19 @@ class TestTurnOutputTriggers(unittest.TestCase):
         steps = grade(self.turns, c)
         self.assertEqual([(s.turn, s.reward) for s in steps], [(0, 1)])
 
+    def test_position_first_turn_is_the_first_message_not_item_zero(self):
+        # 2026-09-09 ruling: bare opening tool calls are not messages; "the first thing you say" is turn 2 here
+        turns = [mkturn(0, "", [("bash", {"command": "ls"})]), mkturn(1, "", [("read", {"path": "a.py"})]),
+                 mkturn(2, "The bug is in a.py.", [("edit", {"file": "a.py"})]), mkturn(3, "done", is_final=True)]
+        c = {"template": "turn_output", "trigger": {"position": "first_turn"},
+             "obligation": {"match": "length_bound", "value": {"n": 3, "unit": "words", "dir": "max"}}}
+        self.assertEqual([(s.turn, s.reward) for s in grade(turns, c)], [(2, 0)])
+        c["obligation"] = {"match": "forbidden", "value": r"^\s*(Let me|The bug)"}
+        self.assertEqual([(s.turn, s.reward) for s in grade(turns, c)], [(2, 0)])
+        # an episode with no text at all has no first message: nothing to grade
+        silent = [mkturn(0, "", [("bash", {})]), mkturn(1, "", [("bash", {})], is_final=False)]
+        self.assertEqual(grade(silent, c), [])
+
     def test_position_final(self):
         c = {"template": "turn_output", "trigger": {"position": "final"},
              "obligation": {"match": "exact", "value": "done"}}
@@ -223,11 +236,11 @@ class TestTurnOutputTriggers(unittest.TestCase):
         self.assertEqual([(s.turn, s.reward) for s in steps], [(2, 1)])
 
     def test_resolver_fallback_to_literal_name(self):
-        turns = [mkturn(0, "", [("think", {"thought": "hmm"})], is_final=True)]
+        turns = [mkturn(0, "hmm", [("think", {"thought": "hmm"})], is_final=True)]
         c = {"template": "turn_output", "trigger": {"tool": "think"},
-             "obligation": {"match": "regex", "value": "."}}
+             "obligation": {"match": "regex", "value": "^hmm$"}}
         steps = grade(turns, c)  # 'think' is not in DEFAULT_RESOLVER -> literal
-        self.assertEqual([(s.turn, s.reward) for s in steps], [(0, 0)])
+        self.assertEqual([(s.turn, s.reward) for s in steps], [(0, 1)])
 
     def test_custom_resolver_overrides_default(self):
         turns = [mkturn(0, "x", [("shell_run", {})], is_final=True)]
@@ -510,9 +523,11 @@ class TestValidationFollowups(unittest.TestCase):
 
 
 class TestNoAnswerPolicy(unittest.TestCase):
-    """Owner ruling 2026-09-03, two kinds of constraints. Required shapes ('fail'): a silent in-scope turn is a step with
-    reward 0 and an episode with no final message fails its final rules once. No-answer-compliant rules ('ungradable':
-    bans, maximum bounds, sentinels): a silent turn is not a step; only turns with text are graded. `empty` is removed. grade_ext() also returns the number of silent in-scope turns for the no-answer rate."""
+    """Owner rulings. 2026-09-09 (Charles: a tool call is a tool call, a message is model output text): a silent in-scope
+    turn is NOT a message and never a graded step, whatever the matcher; it is counted in n_silent. 2026-09-03, still in
+    force for the MISSING FINAL MESSAGE: a rule that needs an answer ('fail': prefix, exact, fenced, JSON, regex,
+    language, minimum bounds) fails once when the episode ends on a tool call; a ban / maximum / sentinel ('ungradable')
+    is not gradable. `empty` is removed. grade_ext() also returns the number of silent in-scope turns."""
 
     def _turns(self, texts, final_is_message=True):
         turns = []
@@ -538,11 +553,15 @@ class TestNoAnswerPolicy(unittest.TestCase):
         with self.assertRaises(ValueError):
             tv.no_answer_policy({"no_answer": "maybe", "obligation": {"match": "forbidden"}})
 
-    def test_required_shape_silent_turn_is_a_failed_step(self):
+    def test_required_shape_silent_turn_is_not_a_step(self):
         c = {"template": "turn_output", "trigger": {"position": "any_turn"}, "obligation": {"match": "prefix", "value": "[LOG]"}}
         steps, n_silent = tv.grade_ext(self._turns(["", "[LOG] done"]), c)
-        self.assertEqual([s.reward for s in steps], [0, 1]); self.assertEqual(n_silent, 1)
-        self.assertTrue(tv.is_silent_step(steps[0])); self.assertFalse(tv.is_silent_step(steps[1]))
+        self.assertEqual([(s.turn, s.reward) for s in steps], [(1, 1)]); self.assertEqual(n_silent, 1)
+        self.assertFalse(tv.is_silent_step(steps[0]))
+        # a language rule on an episode that mostly issues bare tool calls grades only the turns with text
+        c = {"template": "turn_output", "trigger": {"position": "any_turn"}, "obligation": {"match": "language", "value": "hangul"}}
+        steps, n_silent = tv.grade_ext(self._turns(["", "", "", "파이썬 코드를 확인합니다"]), c)
+        self.assertEqual([(s.turn, s.reward) for s in steps], [(3, 1)]); self.assertEqual(n_silent, 3)
 
     def test_ban_silent_turn_is_not_a_step_but_is_counted(self):
         c = {"template": "turn_output", "trigger": {"position": "any_turn"}, "obligation": {"match": "forbidden", "value": "!"}}
@@ -554,10 +573,10 @@ class TestNoAnswerPolicy(unittest.TestCase):
         steps, n_silent = tv.grade_ext(self._turns(["", "x"]), c)
         self.assertEqual(steps, []); self.assertEqual(n_silent, 1)
 
-    def test_minimum_silent_turn_fails(self):
+    def test_minimum_silent_turn_is_not_a_step_either(self):
         c = {"template": "turn_output", "trigger": {"tool": "BASH_TOOL_NAME"}, "obligation": {"match": "length_bound", "value": {"n": 1, "unit": "words", "dir": "min"}}}
         steps, n_silent = tv.grade_ext(self._turns(["", "x"]), c)
-        self.assertEqual([s.reward for s in steps], [0]); self.assertEqual(n_silent, 1)
+        self.assertEqual(steps, []); self.assertEqual(n_silent, 1)
 
     def test_unfinished_episode_required_final_fails_once(self):
         c = {"template": "turn_output", "trigger": {"position": "final"}, "obligation": {"match": "prefix", "value": "DONE:"}}
