@@ -192,6 +192,44 @@ def _strip_code(s):
     return _INLINE_CODE_RE.sub(" ", s)
 
 
+_ASCII_RUN_RE = re.compile(r"[\x21-\x7e]+")
+_IDENTIFIER_LIKE_RE = re.compile(r"[_./\\()\[\]{}<>=:#@$%&*+|~^]|\d|[a-z][A-Z]|^[A-Z]{2,}$")
+_TOKEN_PUNCT = ",;:.!?\"'`()[]{}\u3001\u3002\u300c\u300d\uff08\uff09\uff1a\uff1b\uff01\uff1f"
+
+
+def _prose_view(s):
+    """The text a reader would call prose: code blocks and inline spans removed (`_strip_code`) and ASCII runs that
+    look like code — identifiers with `_`/`.`/`/`, paths, calls, CamelCase, digits, ALLCAPS — dropped. Runs are maximal
+    sequences of printable ASCII, so an identifier glued to CJK text ("ConditionSet。检查") is still found; non-ASCII
+    text is always kept.
+
+    2026-09-09 (blind-judge audit, 26 language false fails): "write in Korean" messages carried `PyMethod.get_index_text()`,
+    `django/forms/models.py`, `help_text` in the running prose (not in backticks) and lost the character majority to
+    Latin; the judge calls code identifiers unavoidable and not prose. With this view the strict-majority rule agrees
+    with the judge on 104 of 110 scored language rows (72 % before); higher thresholds only lose agreement."""
+
+    def _keep_or_drop(m):
+        run = m.group(0)
+        core = run.strip(_TOKEN_PUNCT) or run
+        return " " if _IDENTIFIER_LIKE_RE.search(core) else run
+
+    return _ASCII_RUN_RE.sub(_keep_or_drop, _strip_code(s))
+
+
+def _script_share(s, script):
+    """(in_script, alphabetic) over the prose view. Japanese (`kana`) counts kana AND han characters, provided at least
+    one kana character is present (kanji-heavy Japanese lost the kana majority to its own kanji; Chinese text has no
+    kana and stays out)."""
+    alpha = [ch for ch in _prose_view(s) if ch.isalpha()]
+    if script == "kana":
+        if not any(_script_matches(ch, _SCRIPT_NAME_PREFIXES["kana"]) for ch in alpha):
+            return 0, len(alpha)
+        n = sum(1 for ch in alpha if _script_matches(ch, _SCRIPT_NAME_PREFIXES["kana"]) or _script_matches(ch, _SCRIPT_NAME_PREFIXES["han"]))
+        return n, len(alpha)
+    prefixes = _SCRIPT_NAME_PREFIXES[script]
+    return sum(1 for ch in alpha if _script_matches(ch, prefixes)), len(alpha)
+
+
 _LEADING_TAG_RE = re.compile(r"^[\[(][A-Za-z][\w -]*[\])]:?$")
 
 

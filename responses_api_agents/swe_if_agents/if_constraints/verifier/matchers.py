@@ -17,7 +17,9 @@ Semantics deliberately documented here
 - `length_bound` sentence counting is NAIVE: sentences are split on `.` `!` `?` followed by whitespace or end-of-string;
   abbreviations ("e.g. ") and decimal points followed by space over-count, text with no terminal punctuation counts as one.
 - `language` is SCRIPT-LEVEL detection only: pass iff a strict majority of alphabetic characters fall in the expected
-  script's unicode ranges. Latin-language distinctions (Spanish vs English) are NOT attempted.
+  script's unicode ranges. Latin-language distinctions (Spanish vs English) are NOT attempted. Since 2026-09-09 the
+  characters are counted on the PROSE view (code blocks, inline code and ASCII identifier-like tokens removed) and
+  `kana` means Japanese: kana plus han characters, with at least one kana present.
 - `fenced` (since 2026-09-09) requires the WHOLE message to be one paired fence: first line = opener (three backticks
   plus a non-empty info-string matching the value), last line = a closing line of exactly three backticks, no closing
   line in between. Text before or after the fence fails; that is what every fenced instruction says ("entirely inside",
@@ -43,6 +45,7 @@ from .core import (
     SILENT_TURN_NOT_GRADABLE,
     _length_count,
     _script_matches,
+    _script_share,
     _strip_code,
     _whole_text_is_one_fence,
 )
@@ -131,16 +134,14 @@ def _length_bound_silent_turn(value):
 
 
 def _m_language(value, s):
-    prefixes = _SCRIPT_NAME_PREFIXES.get(str(value))
-    if prefixes is None:
+    if str(value) not in _SCRIPT_NAME_PREFIXES:
         raise ValueError("language: unknown script %r" % (value,))
-    alpha = [ch for ch in s if ch.isalpha()]
-    in_script = sum(1 for ch in alpha if _script_matches(ch, prefixes))
-    ok = len(alpha) > 0 and in_script * 2 > len(alpha)  # STRICT majority
+    in_script, n_alpha = _script_share(s, str(value))  # prose view; kana = kana + han with >= 1 kana (2026-09-09)
+    ok = n_alpha > 0 and in_script * 2 > n_alpha  # STRICT majority (owner spec, unchanged)
     return ok, (
-        "ok (%d/%d %s)" % (in_script, len(alpha), value)
+        "ok (%d/%d %s in the prose)" % (in_script, n_alpha, value)
         if ok
-        else "no strict %s majority (%d of %d alphabetic chars)" % (value, in_script, len(alpha))
+        else "no strict %s majority (%d of %d alphabetic chars in the prose; code and identifiers excluded)" % (value, in_script, n_alpha)
     )
 
 
@@ -339,7 +340,7 @@ MATCHERS: Dict[str, Matcher] = {
             "language",
             _m_language,
             SILENT_TURN_FAILS,
-            "a strict majority of alphabetic characters belongs to the named script",
+            "a strict majority of the prose's alphabetic characters belongs to the named script (kana = kana + han)",
             witness=lambda v: _SCRIPT_SAMPLE.get(str(v)),
             violation=_v_language,
             examples=tuple(_SCRIPT_SAMPLE),
