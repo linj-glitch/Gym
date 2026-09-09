@@ -17,9 +17,17 @@ Semantics deliberately documented here
   abbreviations ("e.g. ") and decimal points followed by space over-count, text with no terminal punctuation counts as one.
 - `language` is SCRIPT-LEVEL detection only: pass iff a strict majority of alphabetic characters fall in the expected
   script's unicode ranges. Latin-language distinctions (Spanish vs English) are NOT attempted.
-- `fenced` counts OPENING fences only, and only properly PAIRED ones: opening = line starting with three backticks plus a
-  non-empty info-string; closing = line of exactly three backticks. Closing fences and unpaired openers never count.
-- `json_schema` parses the WHOLE message: a valid object followed by trailing garbage fails; non-dict JSON fails.
+- `fenced` (since 2026-09-09) requires the WHOLE message to be one paired fence: first line = opener (three backticks
+  plus a non-empty info-string matching the value), last line = a closing line of exactly three backticks, no closing
+  line in between. Text before or after the fence fails; that is what every fenced instruction says ("entirely inside",
+  "nothing outside the fence"). Before 2026-09-09 one matching paired fence anywhere in the message passed.
+- `json_schema` parses the WHOLE message: a valid object followed by trailing garbage fails; non-dict JSON fails; since
+  2026-09-09 an object with keys beyond value['required'] fails too (the instruction names the keys and says "nothing
+  else"); an empty `required` list accepts any object.
+- `forbidden` (since 2026-09-09) searches the PROSE view of the text: fenced code blocks and inline code spans are
+  removed first, unless the pattern itself contains a backtick (a ban on code spans must see them).
+- `length_bound` words (since 2026-09-09): whitespace tokens carrying a letter or digit, minus fence markers, pure
+  punctuation (bullets, dashes) and one leading bracketed tag such as `[PLAN]`.
 """
 
 import json
@@ -32,9 +40,10 @@ from .core import (
     NO_ANSWER_POLICIES,
     SILENT_TURN_FAILS,
     SILENT_TURN_NOT_GRADABLE,
-    _count_paired_fences,
     _length_count,
     _script_matches,
+    _strip_code,
+    _whole_text_is_one_fence,
 )
 
 
@@ -71,7 +80,9 @@ def _m_regex(value, s):
 
 
 def _m_forbidden(value, s):
-    m = re.search(str(value), s)
+    pattern = str(value)
+    haystack = s if "`" in pattern else _strip_code(s)  # banned words inside code are code, not prose
+    m = re.search(pattern, haystack)
     ok = m is None
     return ok, ("ok" if ok else "forbidden pattern %r matched %r" % (value, m.group(0)[:40]))
 
@@ -88,13 +99,15 @@ def _m_json_schema(value, s):
     missing = [k for k in required if k not in obj]
     if missing:
         return False, "JSON object missing required keys: %s" % (missing,)
+    if required:
+        extra = [k for k in obj if k not in required]
+        if extra:
+            return False, "JSON object has keys beyond the named ones %s: %s" % (required, extra)
     return True, "ok"
 
 
 def _m_fenced(value, s):
-    n = _count_paired_fences(s, str(value))
-    ok = n >= 1
-    return ok, ("ok (%d paired fence(s))" % n if ok else "no paired fence with info-string matching %r" % (value,))
+    return _whole_text_is_one_fence(s, str(value))
 
 
 def _m_length_bound(value, s):
@@ -282,7 +295,7 @@ MATCHERS: Dict[str, Matcher] = {
             "forbidden",
             _m_forbidden,
             SILENT_TURN_NOT_GRADABLE,
-            "re.search(value) finds NO match in the visible text",
+            "re.search(value) finds NO match in the prose view of the visible text (code spans/blocks removed)",
             witness=lambda v: None if re.search(str(v), "done") else "done",
             violation=_v_forbidden,
             examples=(";", r"(?i)\bin summary\b"),
@@ -291,7 +304,7 @@ MATCHERS: Dict[str, Matcher] = {
             "json_schema",
             _m_json_schema,
             SILENT_TURN_FAILS,
-            "the visible text is one JSON object containing value['required'] keys",
+            "the visible text is one JSON object whose keys are exactly value['required'] (any keys when empty)",
             value_key=lambda v: "any",
             witness=_w_json_schema,
             violation=lambda v: "not json",
@@ -301,9 +314,9 @@ MATCHERS: Dict[str, Matcher] = {
             "fenced",
             _m_fenced,
             SILENT_TURN_FAILS,
-            "at least one paired code fence whose info string matches the value regex",
+            "the whole visible text is one paired code fence whose info string matches the value regex",
             witness=_w_fenced,
-            violation=lambda v: "no fence here",
+            violation=lambda v: "intro line\n```%s\ncontent\n```" % (_literal(v) or "json"),
             examples=("json", "diff"),
         ),
         Matcher(

@@ -61,15 +61,38 @@ class TestMatchers(unittest.TestCase):
         self.assertEqual(one_turn_grade("all plain text", "forbidden", r"[\U0001F600-\U0001F64F]"), 1)
         self.assertEqual(one_turn_grade("done \U0001F600", "forbidden", r"[\U0001F600-\U0001F64F]"), 0)
 
+    def test_forbidden_ignores_code_spans_and_blocks(self):
+        # 2026-09-09: banned words inside code are code, not prose
+        pron = r"\b(I|I'm|I've|I'd|me|my|mine)\b"
+        self.assertEqual(one_turn_grade("The imaginary unit `I` is used in sympy.", "forbidden", pron), 1)
+        self.assertEqual(one_turn_grade("Fixed.\n```py\nx = I * 2\n```\n", "forbidden", pron), 1)
+        self.assertEqual(one_turn_grade("I fixed it.", "forbidden", pron), 0)
+        self.assertEqual(one_turn_grade("Calls `get_connection_params()` once.", "forbidden", r"\([^)\n]*\)"), 1)
+        self.assertEqual(one_turn_grade("Calls it once (I think).", "forbidden", r"\([^)\n]*\)"), 0)
+        # a ban that targets backticks themselves must still see them
+        self.assertEqual(one_turn_grade("use `foo` here", "forbidden", r"`[^`\n]+`"), 0)
+
     def test_json_schema_pass_and_fail(self):
         self.assertEqual(one_turn_grade('{"a": 1}', "json_schema", {"required": ["a"]}), 1)
         self.assertEqual(one_turn_grade('{"b": 1}', "json_schema", {"required": ["a"]}), 0)
+        # since 2026-09-09: the instruction names the keys and says "nothing else" -> extra keys fail
+        self.assertEqual(one_turn_grade('{"a": 1, "fix": "x"}', "json_schema", {"required": ["a"]}), 0)
+        self.assertEqual(one_turn_grade('{"a": 1, "b": 2}', "json_schema", {"required": ["a", "b"]}), 1)
+        self.assertEqual(one_turn_grade('{"anything": 1}', "json_schema", {"required": []}), 1)  # no keys named: any object
 
     def test_fenced_pass_and_fail(self):
-        self.assertEqual(one_turn_grade("intro\n```cpp\nint x;\n```\n", "fenced", "cpp"), 1)
+        # since 2026-09-09 the WHOLE message must be the fence ("entirely inside", "nothing outside the fence")
+        self.assertEqual(one_turn_grade("```cpp\nint x;\n```\n", "fenced", "cpp"), 1)
+        self.assertEqual(one_turn_grade("  ```cpp\nint x;\n\n  ```  \n", "fenced", "^cpp$"), 1)  # indented / padded lines ok
+        self.assertEqual(one_turn_grade("intro\n```cpp\nint x;\n```\n", "fenced", "cpp"), 0)  # prose before the fence
+        self.assertEqual(one_turn_grade("```cpp\nint x;\n```\nAll done.", "fenced", "cpp"), 0)  # prose after the fence
+        self.assertEqual(one_turn_grade("```cpp\nx\n```\n```cpp\ny\n```", "fenced", "cpp"), 0)  # two fences
+        self.assertEqual(one_turn_grade("```cpp\nint x;", "fenced", "cpp"), 0)  # unpaired opener
         self.assertEqual(one_turn_grade("no fence at all", "fenced", "cpp"), 0)
         # paired fence with WRONG info-string also fails
         self.assertEqual(one_turn_grade("```python\nx=1\n```", "fenced", "^cpp$"), 0)
+        # a nested ```lang line inside the fence is content, a bare ``` line closes it early
+        self.assertEqual(one_turn_grade("```md\n```python\nx\n```", "fenced", "^md$"), 1)
 
     def test_length_bound_lines(self):
         text = "a\n\nb\nc"  # 3 non-empty lines
@@ -83,6 +106,20 @@ class TestMatchers(unittest.TestCase):
                                         {"n": 3, "unit": "words", "dir": "min"}), 1)
         self.assertEqual(one_turn_grade("one two", "length_bound",
                                         {"n": 3, "unit": "words", "dir": "min"}), 0)
+
+    def test_length_bound_words_ignores_markup(self):
+        # 2026-09-09: a leading bracketed tag, fence markers and pure-punctuation tokens are not words
+        cap8 = {"n": 8, "unit": "words", "dir": "max"}
+        self.assertEqual(one_turn_grade("[PLAN] Let me search the doc for usage examples.", "length_bound", cap8), 1)
+        self.assertEqual(one_turn_grade("(edit) Let me search the doc for usage examples.", "length_bound", cap8), 1)
+        self.assertEqual(one_turn_grade("Let me search the doc for usage examples now.", "length_bound", cap8), 0)
+        cap10 = {"n": 10, "unit": "words", "dir": "max"}
+        self.assertEqual(one_turn_grade("done\n```python\nChange completed. Min() returns oo, Max() returns -oo.\n```",
+                                        "length_bound", cap10), 1)  # 9 words; the two fence markers do not count
+        self.assertEqual(one_turn_grade("- alpha\n- beta\n* gamma", "length_bound", {"n": 3, "unit": "words", "dir": "max"}), 1)
+        # only ONE leading tag is free; a second bracketed token is a word
+        self.assertEqual(one_turn_grade("[PLAN] [x] a b", "length_bound", {"n": 3, "unit": "words", "dir": "max"}), 1)
+        self.assertEqual(one_turn_grade("[PLAN] [x] a b c", "length_bound", {"n": 3, "unit": "words", "dir": "max"}), 0)
 
     def test_length_bound_sentences(self):
         text = "First. Second! Third?"

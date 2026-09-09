@@ -144,6 +144,66 @@ def _count_paired_fences(s, info_pattern):
     return matched
 
 
+def _whole_text_is_one_fence(s, info_pattern):
+    """(ok, detail): the ENTIRE stripped text is exactly one paired fence whose info-string matches info_pattern.
+
+    2026-09-09 (blind-judge audit of the 200v4 benchmark, 18 misgrades): every `fenced` instruction the phrasing layer
+    emits says "entirely inside a single ... block" / "nothing outside the fence", but the old check only asked for
+    at least one paired fence anywhere, so a message with prose, headings and other blocks around a small matching
+    fence passed. Now: first line = opener (three backticks + a non-empty info-string matching the pattern), last line
+    = a closing line of exactly three backticks, and no closing line in between (that would end the fence early and
+    leave text outside it). Bare content lines inside may be anything, including lines that start with backticks and
+    an info-string (nested openers are content, as before).
+    """
+    lines = [ln for ln in s.splitlines()]
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+    while lines and not lines[-1].strip():
+        lines = lines[:-1]
+    if not lines:
+        return False, "no fence: the text is empty"
+    first, last = lines[0].strip(), lines[-1].strip()
+    if not first.startswith("```") or not first[3:].strip():
+        return False, "text does not start with a ```<info> fence opener (text outside the fence)"
+    info = first[3:].strip()
+    if not re.search(info_pattern, info):
+        return False, "fence info-string %r does not match %r" % (info, info_pattern)
+    if len(lines) < 2 or last != "```":
+        return False, "text does not end with a closing ``` line (fence unpaired or text outside the fence)"
+    if any(ln.strip() == "```" for ln in lines[1:-1]):
+        return False, "the fence closes before the end of the text (text outside the fence)"
+    return True, "ok (the whole text is one ```%s fence)" % info
+
+
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+_FENCE_BLOCK_RE = re.compile(r"^[ \t]*```[^\n]*\n.*?^[ \t]*```[ \t]*$", re.S | re.M)
+
+
+def _strip_code(s):
+    """The text with fenced code blocks and inline code spans replaced by a space (prose only).
+
+    2026-09-09 (blind-judge audit): a ban on first-person pronouns matched the imaginary unit `I` inside a code span,
+    a ban on parenthetical remarks matched the `()` of a function name in backticks. Banned words in code are code,
+    not prose; the `forbidden` matcher searches the prose view unless the pattern itself targets backticks."""
+    s = _FENCE_BLOCK_RE.sub(" ", s)
+    return _INLINE_CODE_RE.sub(" ", s)
+
+
+_LEADING_TAG_RE = re.compile(r"^[\[(][A-Za-z][\w -]*[\])]:?$")
+
+
+def _count_words(s):
+    """Words = whitespace-separated tokens that carry at least one letter or digit, minus markup: fence marker
+    tokens (``` or ```info), pure punctuation (list bullets `-` `*`, dashes, arrows) and ONE leading bracketed tag
+    such as `[PLAN]` or `(edit)` (a label the tag-opener constraints of this very pool require, not a word).
+    2026-09-09 (blind-judge audit): "[PLAN] Let me search the doc for usage examples." was 9 words to the old
+    `len(s.split())`, 8 to the judge; "done ```python ... ```" counted its two fence markers."""
+    tokens = s.split()
+    if tokens and _LEADING_TAG_RE.match(tokens[0]):
+        tokens = tokens[1:]
+    return len([t for t in tokens if not t.startswith("```") and any(ch.isalnum() for ch in t)])
+
+
 def _count_sentences(s):
     """Sentences = segments ended by . ! or ? (optionally followed by closing quotes/brackets) and containing at least
     one word character. 2026-09-09 (blind-judge audit of the 200v4 benchmark, two confirmed misgrades): a terminator
@@ -160,7 +220,7 @@ def _length_count(s, unit):
     if unit == "lines":
         return len([ln for ln in s.splitlines() if ln.strip()])
     if unit == "words":
-        return len(s.split())
+        return _count_words(s)
     if unit == "sentences":
         return _count_sentences(s)
     if unit == "chars":
