@@ -137,6 +137,19 @@ class TestMatchers(unittest.TestCase):
         self.assertEqual(one_turn_grade("abcde", "length_bound",
                                         {"n": 4, "unit": "chars", "dir": "max"}), 0)
 
+    def test_language_counts_prose_not_code(self):
+        # 2026-09-09: identifiers, paths and code do not vote; Japanese = kana + kanji
+        korean = "`PyMethod.get_index_text()`에서 `:property:` 옵션이 지정된 경우에도 `%s()` 형태로 괄호를 붙이고 있었습니다. help_text 는 UserChangeForm 의 django/forms/models.py 에 있습니다."
+        self.assertEqual(one_turn_grade(korean, "language", "hangul"), 1)
+        self.assertEqual(one_turn_grade("(plan) `solveset` 已返回 ConditionSet。检查 `as_set` 调用。", "language", "han"), 1)
+        self.assertEqual(one_turn_grade("修正により目的の出力が得られた。テストは143件パス、例外はPythonバージョン互換性による。", "language", "kana"), 1)
+        self.assertEqual(one_turn_grade("你好世界，这是中文。", "language", "kana"), 0)  # no kana at all: Chinese, not Japanese
+        self.assertEqual(one_turn_grade("The fix is complete.\n```py\nx = 1\n```\n", "language", "han"), 0)
+        self.assertEqual(one_turn_grade("Let me look at the test file for SpanSelector and check git history.", "language", "kana"), 0)
+        # an English opening sentence before a Korean body still passes the MAJORITY rule (owner spec; the judge reads
+        # "throughout" strictly — 3 rows of the 200v4 audit)
+        self.assertEqual(one_turn_grade("The fix is complete and verified.\n\n문제 해결 요약: 원인은 폼셋에서 기본값을 가진 필드가 무시되는 것이었습니다. 수정 후 모든 테스트가 통과합니다.", "language", "hangul"), 1)
+
     def test_language_pass_and_fail(self):
         self.assertEqual(one_turn_grade("你好世界 ok", "language", "han"), 1)
         self.assertEqual(one_turn_grade("hello world entirely latin", "language", "han"), 0)
