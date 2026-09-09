@@ -15,15 +15,25 @@ constraint == 'pass'), evaluated by the same code:
   _pivot_match.py header, copy of commit d0badcaf). Message-kind expected
   actions follow pivot_branch_probe._branch_match: matched iff the sampled
   turn contains NO tool call.
-- constraint: deterministic verifier from the vendored grading core
-  (responses_api_agents/swe_agents_constrained), grading surface identical
-  to pivot_branch_probe.grade_branch_in_context — prefix + sampled action
-  parsed as ONE trajectory, verdicts read at the branch turns. Params come
-  from row metadata `constraint_params` (the value-sampled injected params;
-  JSON str) — registry defaults are NOT equivalent.
+- constraint: the deterministic template verifier,
+  responses_api_agents.swe_if_agents.if_constraints.grade_row — the ONLY
+  implementation of the template verifier (owner ruling 2026-09-04) — run on
+  the mining belt's P4 surface (pivot_branch_probe.grade_branch_in_context):
+  prefix + sampled action as ONE trajectory in the whole-trajectory frame,
+  verdicts read at the turns the sampled items belong to. A prefix whose last
+  turn is still open (narration without a tool result) merges with the
+  sampled call into one turn, and that merged turn counts as a branch turn.
 
-Ungraded or missing-constraint rows earn 0.0: mining never counted a branch
-as success without an explicit constraint PASS, and neither do we.
+Row metadata: `constraint` = the sdg constraint id; `constraint_params` = the
+recipe's `verifier_parameter` {template, trigger, obligation[, no_answer]} as
+a JSON str — the value-sampled injected params, registry defaults are NOT
+equivalent; optional `tool_name_overrides` (the tool binding the episode ran
+under), passed through to the grader.
+
+Ungraded rows earn 0.0 (constraint not applicable at the sampled turn, or a
+grading error): mining never counted a branch as success without an explicit
+constraint PASS, and neither do we. Rows that carry no constraint at all (not
+produced by the pivot belt) degrade to match-only — still strictly 0/1.
 
 The response also carries scalar diagnostics that decompose the reward into
 its two axes. NeMo-RL's per-agent aggregator (rollouts.py:1479) promotes every
@@ -32,26 +42,6 @@ drops everything else, which is why `matched` shows up in wandb but the string
 `match_failure_reason` and `constraint_verdict` do not. The bools below are
 one-hot projections of those two strings so both axes become observable
 without changing the reward.
-
-Constraint families (2026-09-08, Lin: training data comes from the TEMPLATE family).
-The row's constraint is graded by the family it belongs to:
-
-- detailed  metadata `constraint` = registry id, `constraint_params` = {param: value};
-            verifier = responses_api_agents/swe_agents_constrained/grading (as before).
-- template  metadata `constraint` = the sdg constraint id, `constraint_params` = the
-            recipe's `verifier_parameter` {template, trigger, obligation[, no_answer]},
-            optional `tool_name_overrides`; verifier = the swe_if_agents grader
-            (responses_api_agents/swe_if_agents/if_constraints.grade_row), the ONLY
-            implementation of the template verifier (owner ruling 2026-09-04).
-
-The family is `metadata.family` when the row says so (P5 make_pivot_rows.py stamps it),
-otherwise inferred from the shape of `constraint_params` (a verifier_parameter carries
-`trigger`/`obligation`). Both families are graded on the SAME surface as the mining
-belt's P4 (pivot_branch_probe.grade_branch_in_context): prefix + sampled action as ONE
-trajectory in the whole-trajectory frame, verdicts read at the turns the sampled items
-belong to. A prefix whose last turn is still open (narration without a tool result) is
-merged with the sampled call into one turn, and that merged turn counts as a branch
-turn — for both families.
 
 reward_mode="verifier" (2026-09-06) turns the same server into a verifier-only
 GRPO reward: 1.0 iff the constraint verifier PASSES on the model's own action
@@ -87,21 +77,8 @@ from resources_servers.swe_pivot.app import (
     verify_target_match,
     verify_tool_name_match,
 )
-from responses_api_agents.swe_agents_constrained.grading.verifiers.trajectory import (
-    grade_constraints,
-    parse_trajectory,
-)
-
-try:  # the template family's verifier lives in swe_if_agents (branch charlwang/swe-if-agents and descendants)
-    from responses_api_agents.swe_if_agents.if_constraints import grade_row as _template_grade_row
-    from responses_api_agents.swe_if_agents.if_constraints.grader import GRADING_ERROR_ID as _TEMPLATE_ERROR_ID
-    from responses_api_agents.swe_if_agents.if_constraints.grader import segment as _template_segment
-except ImportError:  # pragma: no cover - checkout without the template package
-    _template_grade_row = None
-    _TEMPLATE_ERROR_ID = "<grading_error>"
-    _template_segment = None
-
-FAMILIES = ("detailed", "template")
+from responses_api_agents.swe_if_agents.if_constraints import grade_row
+from responses_api_agents.swe_if_agents.if_constraints.grader import GRADING_ERROR_ID, segment
 
 
 logger = logging.getLogger(__name__)
@@ -154,10 +131,6 @@ class ConstrainedBinaryPivotVerifyResponse(BaseVerifyResponse):
     matched: bool
     match_failure_reason: str
     constraint_verdict: ConstraintVerdict
-    # "detailed" | "template" | "" (no constraint in the row). Read from the row's metadata whether or not the
-    # verifier ran (unlike the constraint_* bools below), so unmatched rollouts keep their family. A string:
-    # reported, not promoted to a metric.
-    constraint_family: str = ""
 
     # --- constraint axis (instruction following) ---
     # All four are False when grading did not run — i.e. the match failed and
@@ -241,22 +214,8 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
     # ---- constraint axis (mirror of grade_branch_in_context) ----
 
     @staticmethod
-    def _grade_constraint(prefix_items: List[Any], sampled_items: List[Any], decl: dict) -> ConstraintVerdict:
-        n_prefix = len(prefix_items)
-        steps = parse_trajectory(list(prefix_items) + list(sampled_items))
-        if not steps:
-            return ConstraintVerdict.UNGRADED
-        grading = grade_constraints(steps, [decl], grading_mode="fraction", step_aggregation="mean")
-        branch_turns = {s.turn for s in steps if s.step_index >= n_prefix}
-        at_branch = [v for v in grading.step_verdicts if v.turn in branch_turns]
-        if not at_branch:
-            return ConstraintVerdict.UNGRADED
-        return ConstraintVerdict.PASS if all(v.passed for v in at_branch) else ConstraintVerdict.FAIL
-
-    # ---- constraint families ----
-
-    @staticmethod
     def _row_params(md: dict) -> dict:
+        """The recipe verifier_parameter carried in `constraint_params` (JSON str or dict); {} when unparseable."""
         raw = md.get("constraint_params") or "{}"
         try:
             return json.loads(raw) if isinstance(raw, str) else dict(raw)
@@ -264,22 +223,13 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
             logger.warning("unparseable constraint_params for %s; using {}", md.get("constraint"))
             return {}
 
-    @classmethod
-    def _row_family(cls, md: dict) -> str:
-        """`metadata.family` when stamped by P5; else inferred: a recipe verifier_parameter carries trigger/obligation."""
-        fam = str(md.get("family") or "").strip().lower()
-        if fam in FAMILIES:
-            return fam
-        params = cls._row_params(md)
-        return "template" if ("trigger" in params or "obligation" in params or params.get("template")) else "detailed"
-
     @staticmethod
-    def _branch_turns_template(prefix_items: List[dict], sampled_items: List[dict]) -> set:
-        """Turn indices (template grader frame, 0-based, whole trajectory) that contain sampled items.
+    def _branch_turns(prefix_items: List[dict], sampled_items: List[dict]) -> set:
+        """Turn indices (grader frame, 0-based, whole trajectory) that contain sampled items.
 
         The grader's segmenter closes a turn at each tool result; a prefix ending in an open turn (narration
-        without a result) merges with the sampled call into one turn, which then IS a branch turn — the same rule
-        the detailed path applies through parse_trajectory's step_index >= n_prefix.
+        without a result) merges with the sampled call into one turn, which then IS a branch turn — the mining
+        belt's rule (grade_branch_in_context reads the verdict of every turn a sampled item belongs to).
 
         Whether the prefix's last turn is open is asked of the segmenter itself, not read off the last item's type:
         segment() opens a turn only for visible text or a call, so a trailing assistant message with empty text
@@ -292,21 +242,22 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
             if o.get("type") in ("message", "function_call", "function_call_output", "reasoning")
             and not (o.get("type") == "message" and o.get("role") in ("system", "user", "developer"))
         ]
-        pre = _template_segment(asst_prefix)
+        pre = segment(asst_prefix)
         # the items after the prefix's last tool result form a pending turn iff the segmenter makes one of them
         last_close = max((i for i, o in enumerate(asst_prefix) if o.get("type") == "function_call_output"), default=-1)
-        prefix_open = bool(pre) and bool(_template_segment(asst_prefix[last_close + 1:]))
+        prefix_open = bool(pre) and bool(segment(asst_prefix[last_close + 1:]))
         start = len(pre) - 1 if prefix_open else len(pre)
-        n_all = len(_template_segment(asst_prefix + list(sampled_items)))
+        n_all = len(segment(asst_prefix + list(sampled_items)))
         return set(range(max(start, 0), n_all))
 
     @classmethod
-    def _grade_constraint_template(cls, prefix_items: List[Any], sampled_items: List[Any], md: dict) -> ConstraintVerdict:
-        if _template_grade_row is None:
-            raise RuntimeError(
-                "row carries a template-family constraint but responses_api_agents.swe_if_agents is not in this Gym "
-                "checkout (need branch charlwang/swe-if-agents or a descendant such as linj/pivotrl-lineage-if)"
-            )
+    def _grade_constraint(cls, prefix_items: List[Any], sampled_items: List[Any], md: dict) -> ConstraintVerdict:
+        """Verdict of the row's constraint over prefix + sampled action, read at the branch turns.
+
+        The row is handed to grade_row as a one-constraint `sdg_item` in the whole-trajectory frame, so the grader
+        sees exactly what the mining belt's P4 saw. A grading error (per-constraint `error`, or the grader's
+        whole-row `<grading_error>` pseudo-record) and a trigger that never fires at a branch turn are both UNGRADED.
+        """
         cid = str(md.get("constraint"))
         sdg_item = {
             "type": "fresh",  # whole-trajectory frame, no prefix skipping: identical to the mining belt's P4 surface
@@ -318,36 +269,18 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
             tno = md["tool_name_overrides"]
             tmd["tool_name_overrides"] = tno if isinstance(tno, str) else json.dumps(tno)
         items = list(prefix_items) + list(sampled_items)
-        records = _template_grade_row(tmd, None, items) or []
+        records = grade_row(tmd, None, items) or []
         rec = next((r for r in records if r.get("id") == cid), None)
-        if rec is None or rec.get("id") == _TEMPLATE_ERROR_ID or rec.get("error"):
-            logger.warning("template grading error for %s: %s", cid, (rec or {}).get("error"))
+        if rec is None or rec.get("error"):
+            # rec is None when the grader failed before grading the constraint: its whole-row pseudo-record carries the message
+            err = next((r.get("error") for r in records if r.get("id") in (cid, GRADING_ERROR_ID) and r.get("error")), None)
+            logger.warning("constraint grading error for %s: %s", cid, err)
             return ConstraintVerdict.UNGRADED
-        branch = cls._branch_turns_template(prefix_items, sampled_items)
+        branch = cls._branch_turns(prefix_items, sampled_items)
         at_branch = [st for st in rec.get("steps") or [] if st.get("turn") in branch]
         if not at_branch:
             return ConstraintVerdict.UNGRADED
         return ConstraintVerdict.PASS if all(int(st.get("reward", 0)) >= 1 for st in at_branch) else ConstraintVerdict.FAIL
-
-    @staticmethod
-    def _row_decl(metadata: Optional[dict]) -> Optional[dict]:
-        md = metadata or {}
-        name = md.get("constraint")
-        if not name:
-            return None
-        raw = md.get("constraint_params") or "{}"
-        try:
-            params = json.loads(raw) if isinstance(raw, str) else dict(raw)
-        except (ValueError, TypeError):
-            logger.warning("unparseable constraint_params for %s; using {}", name)
-            params = {}
-        if not md.get("constraint_params"):
-            logger.warning(
-                "row has constraint=%s but no constraint_params — grading with {} "
-                "(backfill rows for mining/training parity)",
-                name,
-            )
-        return {"type": name, "params": params}
 
     async def verify(self, body: ConstrainedBinaryPivotVerifyRequest) -> ConstrainedBinaryPivotVerifyResponse:
         def _dump(item: Any) -> Any:
@@ -362,9 +295,6 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
         if metadata is not None and hasattr(metadata, "model_dump"):
             metadata = metadata.model_dump()
         md = metadata or {}
-        # The family is a metadata lookup (no verifier cost), so it is reported for every rollout that carries a
-        # constraint, graded or not; "" means the row has no constraint.
-        family = self._row_family(md) if md.get("constraint") else ""
 
         verdict = ConstraintVerdict.NO_CONSTRAINT_IN_ROW
         # Constraint grading only decides matched cases, so by default we skip
@@ -373,16 +303,10 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
         # verifier actually ran, which is what the diagnostics key off.
         verifier_mode = self.config.reward_mode == "verifier"
         graded = matched or self.config.always_grade_constraint or verifier_mode
-        if graded:
-            if not md.get("constraint"):
-                verdict = ConstraintVerdict.NO_CONSTRAINT_IN_ROW
-            else:
-                prefix_items = [_dump(i) for i in (body.responses_create_params.input or [])]
-                sampled_items = [_dump(i) for i in (body.response.output or [])]
-                if family == "template":
-                    verdict = self._grade_constraint_template(prefix_items, sampled_items, md)
-                else:
-                    verdict = self._grade_constraint(prefix_items, sampled_items, self._row_decl(md))
+        if graded and md.get("constraint"):
+            prefix_items = [_dump(i) for i in (body.responses_create_params.input or [])]
+            sampled_items = [_dump(i) for i in (body.response.output or [])]
+            verdict = self._grade_constraint(prefix_items, sampled_items, md)
 
         # Binary, mining-aligned: success = matched AND constraint PASS.
         # Rows without a constraint (not produced by the pivot belt) degrade
@@ -403,7 +327,6 @@ class ConstrainedBinaryPivotResourcesServer(SimpleResourcesServer):
             matched=matched,
             match_failure_reason=why,
             constraint_verdict=verdict,
-            constraint_family=family,
             constraint_passed=graded and verdict is ConstraintVerdict.PASS,
             constraint_failed=graded and verdict is ConstraintVerdict.FAIL,
             constraint_ungraded=graded and verdict is ConstraintVerdict.UNGRADED,

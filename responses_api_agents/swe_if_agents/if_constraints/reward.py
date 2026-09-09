@@ -4,8 +4,8 @@
 
 The benchmark path leaves `reward` as the SWE-bench outcome and aggregates the records offline (CR / SCR). For RL a
 single scalar per episode is needed; this module turns the records the gym already attaches into that scalar with the
-same three modes the detailed family used (responses_api_agents/swe_agents_constrained/constrained_reward.py), so a
-training recipe can switch family without changing its reward semantics:
+same three modes the earlier e2e recipe used (shaped / strict / tiered) next to the benchmark's outcome mode, so a
+training recipe keeps its reward semantics when it moves onto these records:
 
     outcome  reward = task                                  (default; the benchmark behaviour, records attached only)
     shaped   reward = task * (1 + alpha * constraint)       when at least one constraint was applicable, else task
@@ -16,8 +16,7 @@ training recipe can switch family without changing its reward semantics:
 (n_pass / n_steps). Task failure gives 0 in shaped/strict/tiered (multiplicative), so the constraint axis can never
 buy reward on an unsolved task.
 
-Two situations pass the task reward through UNSHAPED in every mode, as the detailed family does (constrained_reward.py:
-`if not constraints: return fields`, and its grading-exception handler):
+Two situations pass the task reward through UNSHAPED in every mode:
 
 * no constraints declared (`records` is None — grade_row's answer to a row without sdg_item or with an empty
   constraints list — or an empty list). This is distinct from "declared but none applicable" (records with
