@@ -14,7 +14,8 @@ to grade:
   (mid-task injection);
 * ``sdg_item``: the constraints (verifier parameters), graded on the model-generated turns after the episode.
 
-The task outcome reward is untouched: ``reward`` is the SWE-bench verdict. The IF grades are attached as
+By default the task outcome reward is untouched: ``reward`` is the SWE-bench verdict (``reward_mode: outcome``);
+a training recipe may fold the IF grades into it (shaped / strict / tiered, see ``if_constraints/reward.py``). The IF grades are attached as
 ``if_constraints`` (one record per constraint, per gradable step) for downstream aggregation. Grading semantics
 live in ``if_constraints/`` (the constraint verifier package and its grader; see the README).
 
@@ -34,6 +35,13 @@ from responses_api_agents.swe_if_agents.hooks import (
     write_row_templates,
 )
 from responses_api_agents.swe_if_agents.if_constraints import grade_row
+from responses_api_agents.swe_if_agents.if_constraints.reward import (
+    DEFAULT_ALPHA,
+    DEFAULT_PARTIAL,
+    REWARD_MODES,
+    compute_if_reward,
+    resolve_reward_settings,
+)
 
 
 class SWEIFWrapperConfig(swe.SWEBenchWrapperConfig):
@@ -52,6 +60,19 @@ class SWEIFWrapperConfig(swe.SWEBenchWrapperConfig):
             "(a reasoning-only turn), instead of ending the episode on it. 0 (default) keeps the harness behaviour."
         ),
     )
+    # ---- GRPO reward knob (2026-09-08). The benchmark leaves `reward` as the SWE verdict (outcome); a training
+    # recipe selects how the if_constraints records fold into the scalar. Per-row metadata (reward_mode,
+    # constraint_alpha, success_partial_reward; strings) overrides these. Semantics in if_constraints/reward.py.
+    reward_mode: str = Field(
+        default="outcome",
+        description=(
+            "outcome: reward = SWE verdict, records attached only. shaped: task * (1 + alpha * mean step-average over "
+            "applicable constraints). strict: task * 1[every applicable constraint all_pass] (nothing applicable -> 0). "
+            "tiered: task * (1 if all pass else success_partial_reward)."
+        ),
+    )
+    constraint_alpha: float = Field(default=DEFAULT_ALPHA, description="shaped mode multiplier on the constraint fraction")
+    success_partial_reward: float = Field(default=DEFAULT_PARTIAL, description="tiered mode credit for solved-but-violating")
 
 
 class SWEIFVerifyResponse(swe.SWEBenchVerifyResponse):
@@ -59,6 +80,27 @@ class SWEIFVerifyResponse(swe.SWEBenchVerifyResponse):
     # all_pass, graded_turns, continuation_only, steps: [{turn, reward, detail, items}]}. None when the row has no
     # constraints.
     if_constraints: Optional[List[Dict[str, Any]]] = None
+
+    # ---- training scalars (if_constraints/reward.py). `reward` above is the outcome in outcome mode and the folded
+    # value otherwise; these decompose it. Scalars are promoted to per-agent metrics by the trainer, lists are not.
+    task_reward: float = 0.0
+    constraint_reward: Optional[float] = None       # mean step-average over applicable constraints; None if none
+    constraint_graded: bool = False                 # at least one constraint applicable ("not measured" is not compliance)
+    constraint_all_pass: bool = False
+    reward_mode: str = "outcome"
+    constraint_alpha: float = DEFAULT_ALPHA
+    success_partial_reward: float = 0.0
+    n_constraints: int = 0
+    n_applicable: int = 0
+    n_grading_errors: int = 0
+    continuation_only: bool = False
+    # per graded step: {turn (1-based assistant turn in the frame of response.output), passed, constraint, kind, detail};
+    # NeMo-RL maps `turn` onto its assistant message_log entries for grpo.constraint_violation_advantage.
+    turn_verdicts: List[Dict[str, Any]] = Field(default_factory=list)
+    first_violation_turn: Optional[int] = None
+    num_graded_turns: int = 0
+    num_violating_turns: int = 0
+    reward_components: Dict[str, float] = Field(default_factory=dict)
 
 
 class SWEIFWrapper(swe.SWEBenchWrapper):
@@ -124,7 +166,17 @@ class SWEIFWrapper(swe.SWEBenchWrapper):
             raw_input = rcp.get("input") if isinstance(rcp, dict) else getattr(rcp, "input", None)
             input_items = [i.model_dump() if hasattr(i, "model_dump") else i for i in (raw_input or [])]
             records = grade_row(body.responses_create_params.metadata or {}, input_items, output_items)
-        return SWEIFVerifyResponse(**base.model_dump(), if_constraints=records)
+        mode, alpha, partial = resolve_reward_settings(
+            body.responses_create_params.metadata, self.config.reward_mode, self.config.constraint_alpha, self.config.success_partial_reward
+        )
+        if mode not in REWARD_MODES:
+            raise ValueError(f"reward_mode must be one of {REWARD_MODES}, got {mode!r}")
+        if mode != "outcome" and not self.config.if_grading:
+            raise ValueError(f"reward_mode={mode!r} needs if_grading: true (the records are the reward's input)")
+        folded = compute_if_reward(records, base.reward, mode, alpha, partial)
+        fields = base.model_dump()
+        fields["reward"] = folded.pop("reward")
+        return SWEIFVerifyResponse(**fields, if_constraints=records, **folded)
 
 
 if __name__ == "__main__":

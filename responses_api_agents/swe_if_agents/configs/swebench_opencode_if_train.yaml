@@ -1,0 +1,58 @@
+# swe_if_agents for RL TRAINING (2026-09-08): the template-constraint SWE agent registered under the instance names
+# `swe_if_agents_train` / `swe_if_agents_val` (mirroring the `swe_agents_train` / `swe_agents_val` names of the SWE blends),
+# with the GRPO reward knob exposed. Identical episode mechanics to swebench_opencode_if.yaml (OpenCodeAgent persona,
+# nv-OpenHands fork pin, per-row surfaces and tool binding, in-gym grading); the benchmark file leaves `reward` as the
+# SWE verdict, this one lets the training recipe pick `reward_mode` (outcome | shaped | strict | tiered; per-row
+# metadata may override) — see if_constraints/reward.py. Rows are the recipe sampler's gym rows with
+# agent_ref.name = swe_if_agents_train (agentic-if instruction_pool/scripts/prepare_template_tasks.py --agent-ref).
+swe_if_agents_train:
+  responses_api_agents:
+    swe_if_agents: &swe_if_agents_train_config
+      entrypoint: app.py
+
+      agent_framework: openhands
+      agent_config: responses_api_agents/swe_agents/configs/oh_config.toml
+      agent_max_turns: 100
+      agent_framework_repo: https://github.com/jialeiwang/nv-OpenHands.git
+      agent_framework_commit: e8da162ca2424224e852757980e25ff9a5eaeb43  # pragma: allowlist secret
+
+      container_formatter: ???
+      container_folder_path: null
+      swebench_agent_timeout: 1800
+      swebench_tests_timeout: 900
+      apptainer_memory_limit_mb: 65536
+      command_exec_timeout: 300
+
+      dataset_path: ???
+
+      agent_prompt_overrides:
+      - user_prompt_template: responses_api_agents/swe_agents/prompts/opencode/user_prompt.j2
+        agent_cls: OpenCodeAgent
+        diversify_tool_names: false
+
+      if_grading: true
+      empty_response_retries: 2
+
+      # GRPO reward knob (training recipes override; per-row metadata reward_mode / constraint_alpha /
+      # success_partial_reward win over these):
+      #   outcome  reward = SWE verdict (benchmark behaviour)
+      #   shaped   task * (1 + alpha * mean step-average over applicable constraints)
+      #   strict   task * 1[every applicable constraint all_pass]; nothing applicable -> 0
+      #   tiered   task * (1.0 if all pass else success_partial_reward)
+      reward_mode: outcome
+      constraint_alpha: 1.0
+      success_partial_reward: 0.5
+
+      model_server:
+        name: policy_model
+        type: responses_api_models
+
+      datasets:
+        - name: example
+          type: example
+          jsonl_fpath: responses_api_agents/swe_agents/data/example.jsonl
+
+swe_if_agents_val:
+  responses_api_agents:
+    swe_if_agents:
+      <<: *swe_if_agents_train_config
