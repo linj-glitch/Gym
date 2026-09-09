@@ -31,11 +31,15 @@ def _sel_position(turns, trigger, resolver):
     position = trigger["position"]
     if position not in POSITIONS:
         raise ValueError("unknown position %r" % (position,))
+    # first_turn = the first turn WITH visible text (owner ruling 2026-09-09: a tool call is not a message, so "the
+    # first thing you say" is the first message, not assistant item 0; before, index 0 — a bare opening tool call —
+    # made every first-turn rule abstain, 19 rows of the 200v4 audit).
+    first_text = next((t.index for t in turns if t.visible_text.strip()), None)
     out = []
     for turn in turns:
         fires = (
             position == "any_turn"
-            or (position == "first_turn" and turn.index == 0)
+            or (position == "first_turn" and turn.index == first_text)
             or (position == "final" and turn.is_final)
         )
         if fires:
@@ -117,7 +121,7 @@ TRIGGERS: Dict[str, Trigger] = {
         Trigger(
             "position",
             _sel_position,
-            "a turn by position: any_turn, first_turn (index 0) or final (the last tool-free turn)",
+            "a turn by position: any_turn, first_turn (the first turn with visible text) or final (the last tool-free turn)",
             missing=_missing_position,
             examples=(
                 ({"position": "any_turn"}, (0, 1, 2, 3)),

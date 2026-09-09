@@ -12,7 +12,8 @@ Semantics deliberately documented here
 - All matchers evaluate on ``s = text.strip()``.
 - `exact` is whitespace-tolerant at the ENDS and strict inside: ``s == value.strip()``. This is a deliberate decision.
 - there is no `empty` matcher (removed 2026-09-03, decision D15); reasoning-only turns count as silent (the adapter
-  excludes the reasoning channel from visible_text).
+  excludes the reasoning channel from visible_text). Since 2026-09-09 a silent turn is never a graded step for ANY
+  matcher (owner ruling: a tool call is not a message); `silent_turn` governs the missing final message only.
 - `length_bound` sentence counting is NAIVE: sentences are split on `.` `!` `?` followed by whitespace or end-of-string;
   abbreviations ("e.g. ") and decimal points followed by space over-count, text with no terminal punctuation counts as one.
 - `language` is SCRIPT-LEVEL detection only: pass iff a strict majority of alphabetic characters fall in the expected
@@ -224,7 +225,8 @@ class Matcher:
 
     Mandatory: `name`; `check(value, stripped_text) -> (ok, detail)`; `silent_turn` = SILENT_TURN_FAILS or
     SILENT_TURN_NOT_GRADABLE, or a function of the obligation value returning one of them (only length_bound needs that:
-    a maximum is not gradable on silence, a minimum fails); `doc`, one line.
+    a maximum is not gradable on absence, a minimum fails) — since 2026-09-09 this kind decides only what a MISSING
+    FINAL MESSAGE means (a silent turn is never a step, see templates._grade_visible); `doc`, one line.
     Optional (used by the pools, the gate, the phrasing layer and the conformance tests): `value_key(value) -> str`,
     `witness(value) -> Optional[str]` (a text that passes), `violation(value) -> Optional[str]` (a text that fails),
     `examples` (values the conformance test runs), `instruction_kind` (phrasing key; defaults to the name)."""

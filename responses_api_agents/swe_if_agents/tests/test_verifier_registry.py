@@ -39,16 +39,25 @@ class MatcherConformance(unittest.TestCase):
             with self.assertRaises(ValueError):
                 tv.no_answer_policy(dict(c, no_answer=wrong))
 
-    def test_silent_turn_follows_the_declared_policy(self):
+    def test_silent_turns_are_never_steps_whatever_the_matcher(self):
+        # 2026-09-09 ruling: a tool call is not a message; silence is counted, never graded
         silent = [tv.Turn(0, "", [tv.ToolCall("bash", {})]), tv.Turn(1, "", [], is_final=True)]
         for name, m in tv.MATCHERS.items():
             value = m.examples[0]
             c = {"template": "turn_output", "trigger": {"position": "any_turn"}, "obligation": {"match": name, "value": value}}
             steps, n_silent = tv.grade_ext(silent, c)
-            self.assertEqual(n_silent, 2, name)
+            self.assertEqual((steps, n_silent), ([], 2), name)
+
+    def test_missing_final_follows_the_declared_kind(self):
+        # the matcher's kind decides only what a MISSING final message means (2026-09-03 ruling, still in force)
+        unfinished = [tv.Turn(0, "x", [tv.ToolCall("bash", {})]), tv.Turn(1, "y", [tv.ToolCall("bash", {})])]
+        for name, m in tv.MATCHERS.items():
+            value = m.examples[0]
+            c = {"template": "turn_output", "trigger": {"position": "final"}, "obligation": {"match": name, "value": value}}
+            steps, n_silent = tv.grade_ext(unfinished, c)
+            self.assertEqual(n_silent, 1, name)
             if m.silence_policy(value) == tv.SILENT_TURN_FAILS:
-                self.assertEqual([s.reward for s in steps], [0, 0], name)
-                self.assertTrue(all(tv.is_silent_step(s) for s in steps), name)
+                self.assertEqual([s.reward for s in steps], [0], name); self.assertTrue(tv.is_silent_step(steps[0]), name)
             else:
                 self.assertEqual(steps, [], name)
 

@@ -1,6 +1,8 @@
 """Constraint templates and their registry: which surface of the trajectory an obligation is graded on.
 
-`turn_output`  the visible text of the selected turns (no-answer policy applies; silent in-scope turns are counted)
+`turn_output`  the visible text of the selected turns; a silent turn (tool call, no text) is not a message and is never
+               a graded step (owner ruling 2026-09-09: "a tool call is a tool call, a message is model output text");
+               silent in-scope turns are counted; a missing final message follows the matcher's no-answer kind
 `reply_output` the visible text of the turn that follows a tool or a message (legacy: graded like `fail`, no silent count)
 `tool_args`    one argument of each call of the tool (argument-format contract)
 `tool_choice`  which tools were called, how often, in what order (trajectory-scoped: always exactly one step)
@@ -10,7 +12,7 @@ accepts, and one line of documentation. `grade(turns, trigger, obligation, resol
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from .core import ANY_TOOL, NO_TOOL, SILENT_DETAIL, GradedStep, Turn, _flatten_calls, _resolve
+from .core import ANY_TOOL, NO_TOOL, GradedStep, Turn, _flatten_calls, _resolve
 from .matchers import _apply_matcher
 from .triggers import missing_target, select_turns
 
@@ -26,11 +28,16 @@ def _require_visible_target(obligation, template):
 
 
 def _grade_visible(turn, obligation, prefix, policy="fail"):
-    """Grade one in-scope turn. Returns a GradedStep, or None when the turn is silent and the policy is 'ungradable'."""
+    """Grade one in-scope turn. Returns a GradedStep, or None when the turn is silent.
+
+    Owner ruling 2026-09-09 (Charles): a tool call is a tool call, a message is model output text. A turn with no
+    visible text is not a message, so no message rule — required shape or ban — applies to it; it is counted as a
+    no-answer (`n_silent`) and never graded. Before this ruling (2026-09-03) a required shape failed on silence; that
+    kind (`Matcher.silent_turn`, the `policy` argument) now governs only the missing final message
+    (`_grade_visible_turns`).
+    """
     if not turn.visible_text.strip():
-        if policy == "ungradable":
-            return None
-        return GradedStep(turn=turn.index, reward=0, detail=prefix + SILENT_DETAIL)
+        return None
     ok, why = _apply_matcher(obligation["match"], obligation.get("value"),
                              turn.visible_text)
     return GradedStep(turn=turn.index, reward=1 if ok else 0,
@@ -47,6 +54,8 @@ def _grade_visible_turns(turns, trigger, obligation, resolver, policy, allowed, 
         step = _grade_visible(turn, obligation, prefix, policy)
         if step is not None:
             out.append(step)
+    # A missing final message (the episode ended on a tool call or an error) keeps the 2026-09-03 ruling: a rule that
+    # needs an answer (`policy == "fail"`) has FAILED once; a ban / maximum / sentinel is not gradable.
     detail = missing_target(turns, trigger, resolver, allowed)
     if detail is not None and count_silent:
         n_silent += 1
@@ -173,7 +182,7 @@ class Template:
 
 
 TEMPLATES: Dict[str, Template] = {t.name: t for t in (
-    Template("turn_output", _grade_turn_output, "visible text of the turns a tool/position/all_of trigger selects; no-answer policy applies", applies_policy=True),
+    Template("turn_output", _grade_turn_output, "visible text of the turns a tool/position/all_of trigger selects; silent turns are not steps; a missing final follows the no-answer kind", applies_policy=True),
     Template("reply_output", _grade_reply_output, "visible text of the turn after a tool call or a matching message (legacy; silent reply = failed step)"),
     Template("tool_args", _grade_tool_args, "one argument of every call of the tool, graded with the matcher; empty when never called"),
     Template("tool_choice", _grade_tool_choice, "which tools / how many / in what order; always exactly one trajectory-scoped step"),

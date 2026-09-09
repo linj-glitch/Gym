@@ -10,8 +10,10 @@ Output contract (standing owner ruling)
 `grade(turns, constraint, resolver=None)` returns a list of GradedStep, one per gradable step, each with reward 1 or 0.
 If the trigger never fires the list is EMPTY (applicability == non-empty list; no abstain flag). Exception: `tool_choice`
 is trajectory-scoped and ALWAYS returns exactly one GradedStep with turn=-1. `grade_ext` also returns the number of
-silent in-scope turns (no visible text, or no final message) so the no-answer rate can be reported; under the `fail`
-policy those turns are also among the returned steps (reward 0), under `ungradable` they are not steps at all.
+silent in-scope turns (no visible text, or no final message) so the no-answer rate can be reported. Owner ruling
+2026-09-09: a tool call is a tool call, a message is model output text — a silent turn is never a graded step; a
+missing final message is a failed step for a rule that needs an answer (`fail` kind) and no step for a ban / maximum
+/ sentinel (`ungradable`). `first_turn` is the first turn with visible text.
 
 Adding a matcher, a trigger (conditioner) or a template = one registry entry in the corresponding module, with examples;
 `test_registry_conformance.py` checks every entry. Stdlib only; python 3.9 compatible.
