@@ -145,10 +145,15 @@ def _count_paired_fences(s, info_pattern):
 
 
 def _count_sentences(s):
+    """Sentences = segments ended by . ! or ? (optionally followed by closing quotes/brackets) and containing at least
+    one word character. 2026-09-09 (blind-judge audit of the 200v4 benchmark, two confirmed misgrades): a terminator
+    followed by a closing quote or bracket ('encoding."', 'done.)') is a sentence end (the old regex demanded whitespace
+    right after the terminator); a trailing segment with no word character (a closing code fence '```' after a
+    period, a bare emoticon) is not a sentence."""
     if not s.strip():
         return 0
-    parts = re.split(r"[.!?](?:\s+|$)", s)
-    return len([p for p in parts if p.strip()])
+    parts = re.split(r"[.!?]+[\"')\]\}]*(?:\s+|$)", s)
+    return len([p for p in parts if re.search(r"\w", p)])
 
 
 def _length_count(s, unit):
