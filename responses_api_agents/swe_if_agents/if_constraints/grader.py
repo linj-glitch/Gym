@@ -106,7 +106,9 @@ def to_tv_turns(segs: List[dict], persona: str = "opencode", finish: str = "fini
     if turns:
         last = turns[-1]
         genuine = (
-            (len(last.tool_calls) == 0) if persona == "opencode" else any(c.name == finish for c in last.tool_calls)
+            # codeact ends with a finish call; every other persona (opencode, claude_code, ... on the OpenCode toolset)
+            # ends on a message without a tool call (2026-09-10)
+            any(c.name == finish for c in last.tool_calls) if persona == "codeact" else (len(last.tool_calls) == 0)
         )
         last.is_final = bool(genuine)
     return turns
