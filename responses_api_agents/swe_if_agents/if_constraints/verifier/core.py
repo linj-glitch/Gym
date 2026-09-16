@@ -216,6 +216,24 @@ def _prose_view(s):
     return _ASCII_RUN_RE.sub(_keep_or_drop, _strip_code(s))
 
 
+def _whole_fence_body(s):
+    """The body of a message that is ENTIRELY one fenced block (opener line ... closing line), else None.
+
+    2026-09-16 (Opus 5 200v4 audit): a language constraint met a fenced/JSON constraint on the same item; the model
+    wrote its (compliant, Chinese/Russian) message inside the demanded ```status / ```plaintext fence, `_prose_view`
+    stripped the whole block and the language check failed with "0 of 0 alphabetic chars". When the fence IS the
+    message, its body is the prose."""
+    lines = [ln for ln in s.splitlines()]
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+    while lines and not lines[-1].strip():
+        lines = lines[:-1]
+    if len(lines) < 2 or not lines[0].strip().startswith("```") or lines[-1].strip() != "```":
+        return None
+    body = "\n".join(lines[1:-1])
+    return body if body.strip() else None
+
+
 def _script_share(s, script):
     """(in_script, alphabetic) over the prose view. Japanese (`kana`) counts kana AND han characters, provided at least
     one kana character is present (kanji-heavy Japanese lost the kana majority to its own kanji; Chinese text has no

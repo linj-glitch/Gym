@@ -47,6 +47,7 @@ from .core import (
     _script_matches,
     _script_share,
     _strip_code,
+    _whole_fence_body,
     _whole_text_is_one_fence,
 )
 
@@ -137,6 +138,10 @@ def _m_language(value, s):
     if str(value) not in _SCRIPT_NAME_PREFIXES:
         raise ValueError("language: unknown script %r" % (value,))
     in_script, n_alpha = _script_share(s, str(value))  # prose view; kana = kana + han with >= 1 kana (2026-09-09)
+    if n_alpha == 0:
+        body = _whole_fence_body(s)  # the message IS one fence (another constraint demanded it): its body is the prose
+        if body is not None:
+            in_script, n_alpha = _script_share(body, str(value))
     ok = n_alpha > 0 and in_script * 2 > n_alpha  # STRICT majority (owner spec, unchanged)
     return ok, (
         "ok (%d/%d %s in the prose)" % (in_script, n_alpha, value)
