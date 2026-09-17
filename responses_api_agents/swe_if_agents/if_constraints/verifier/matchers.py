@@ -17,8 +17,10 @@ Semantics deliberately documented here
   abbreviations ("e.g. ") and decimal points followed by space over-count, text with no terminal punctuation counts as one.
 - `language` is SCRIPT-LEVEL detection only: pass iff a strict majority of alphabetic characters fall in the expected
   script's unicode ranges. Latin-language distinctions (Spanish vs English) are NOT attempted.
-- `fenced` counts OPENING fences only, and only properly PAIRED ones: opening = line starting with three backticks plus a
-  non-empty info-string; closing = line of exactly three backticks. Closing fences and unpaired openers never count.
+- `fenced` (since 2026-09-09) requires the WHOLE message to be one paired fence: first line = opener (three backticks
+  plus a non-empty info-string matching the value), last line = a closing line of exactly three backticks, no closing
+  line in between. Text before or after the fence fails; that is what every fenced instruction says ("entirely inside",
+  "nothing outside the fence"). Before 2026-09-09 one matching paired fence anywhere in the message passed.
 - `json_schema` parses the WHOLE message: a valid object followed by trailing garbage fails; non-dict JSON fails.
 """
 
@@ -32,9 +34,9 @@ from .core import (
     NO_ANSWER_POLICIES,
     SILENT_TURN_FAILS,
     SILENT_TURN_NOT_GRADABLE,
-    _count_paired_fences,
     _length_count,
     _script_matches,
+    _whole_text_is_one_fence,
 )
 
 
@@ -92,9 +94,7 @@ def _m_json_schema(value, s):
 
 
 def _m_fenced(value, s):
-    n = _count_paired_fences(s, str(value))
-    ok = n >= 1
-    return ok, ("ok (%d paired fence(s))" % n if ok else "no paired fence with info-string matching %r" % (value,))
+    return _whole_text_is_one_fence(s, str(value))
 
 
 def _m_length_bound(value, s):
@@ -301,9 +301,9 @@ MATCHERS: Dict[str, Matcher] = {
             "fenced",
             _m_fenced,
             SILENT_TURN_FAILS,
-            "at least one paired code fence whose info string matches the value regex",
+            "the whole visible text is one paired code fence whose info string matches the value regex",
             witness=_w_fenced,
-            violation=lambda v: "no fence here",
+            violation=lambda v: "intro line\n```%s\ncontent\n```" % (_literal(v) or "json"),
             examples=("json", "diff"),
         ),
         Matcher(

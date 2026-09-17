@@ -144,6 +144,37 @@ def _count_paired_fences(s, info_pattern):
     return matched
 
 
+def _whole_text_is_one_fence(s, info_pattern):
+    """(ok, detail): the ENTIRE stripped text is exactly one paired fence whose info-string matches info_pattern.
+
+    2026-09-09 (blind-judge audit of the 200v4 benchmark, 18 misgrades): every `fenced` instruction the phrasing layer
+    emits says "entirely inside a single ... block" / "nothing outside the fence", but the old check only asked for
+    at least one paired fence anywhere, so a message with prose, headings and other blocks around a small matching
+    fence passed. Now: first line = opener (three backticks + a non-empty info-string matching the pattern), last line
+    = a closing line of exactly three backticks, and no closing line in between (that would end the fence early and
+    leave text outside it). Bare content lines inside may be anything, including lines that start with backticks and
+    an info-string (nested openers are content, as before).
+    """
+    lines = [ln for ln in s.splitlines()]
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+    while lines and not lines[-1].strip():
+        lines = lines[:-1]
+    if not lines:
+        return False, "no fence: the text is empty"
+    first, last = lines[0].strip(), lines[-1].strip()
+    if not first.startswith("```") or not first[3:].strip():
+        return False, "text does not start with a ```<info> fence opener (text outside the fence)"
+    info = first[3:].strip()
+    if not re.search(info_pattern, info):
+        return False, "fence info-string %r does not match %r" % (info, info_pattern)
+    if len(lines) < 2 or last != "```":
+        return False, "text does not end with a closing ``` line (fence unpaired or text outside the fence)"
+    if any(ln.strip() == "```" for ln in lines[1:-1]):
+        return False, "the fence closes before the end of the text (text outside the fence)"
+    return True, "ok (the whole text is one ```%s fence)" % info
+
+
 def _count_sentences(s):
     """Sentences = segments ended by . ! or ? (optionally followed by closing quotes/brackets) and containing at least
     one word character. 2026-09-09 (blind-judge audit of the 200v4 benchmark, two confirmed misgrades): a terminator

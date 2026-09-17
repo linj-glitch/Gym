@@ -66,10 +66,18 @@ class TestMatchers(unittest.TestCase):
         self.assertEqual(one_turn_grade('{"b": 1}', "json_schema", {"required": ["a"]}), 0)
 
     def test_fenced_pass_and_fail(self):
-        self.assertEqual(one_turn_grade("intro\n```cpp\nint x;\n```\n", "fenced", "cpp"), 1)
+        # since 2026-09-09 the WHOLE message must be the fence ("entirely inside", "nothing outside the fence")
+        self.assertEqual(one_turn_grade("```cpp\nint x;\n```\n", "fenced", "cpp"), 1)
+        self.assertEqual(one_turn_grade("  ```cpp\nint x;\n\n  ```  \n", "fenced", "^cpp$"), 1)  # indented / padded lines ok
+        self.assertEqual(one_turn_grade("intro\n```cpp\nint x;\n```\n", "fenced", "cpp"), 0)  # prose before the fence
+        self.assertEqual(one_turn_grade("```cpp\nint x;\n```\nAll done.", "fenced", "cpp"), 0)  # prose after the fence
+        self.assertEqual(one_turn_grade("```cpp\nx\n```\n```cpp\ny\n```", "fenced", "cpp"), 0)  # two fences
+        self.assertEqual(one_turn_grade("```cpp\nint x;", "fenced", "cpp"), 0)  # unpaired opener
         self.assertEqual(one_turn_grade("no fence at all", "fenced", "cpp"), 0)
         # paired fence with WRONG info-string also fails
         self.assertEqual(one_turn_grade("```python\nx=1\n```", "fenced", "^cpp$"), 0)
+        # a nested ```lang line inside the fence is content, a bare ``` line closes it early
+        self.assertEqual(one_turn_grade("```md\n```python\nx\n```", "fenced", "^md$"), 1)
 
     def test_length_bound_lines(self):
         text = "a\n\nb\nc"  # 3 non-empty lines
