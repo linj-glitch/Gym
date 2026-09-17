@@ -75,6 +75,10 @@ class TestMatchers(unittest.TestCase):
     def test_json_schema_pass_and_fail(self):
         self.assertEqual(one_turn_grade('{"a": 1}', "json_schema", {"required": ["a"]}), 1)
         self.assertEqual(one_turn_grade('{"b": 1}', "json_schema", {"required": ["a"]}), 0)
+        # since 2026-09-09: the instruction names the keys and says "nothing else" -> extra keys fail
+        self.assertEqual(one_turn_grade('{"a": 1, "fix": "x"}', "json_schema", {"required": ["a"]}), 0)
+        self.assertEqual(one_turn_grade('{"a": 1, "b": 2}', "json_schema", {"required": ["a", "b"]}), 1)
+        self.assertEqual(one_turn_grade('{"anything": 1}', "json_schema", {"required": []}), 1)  # no keys named: any object
 
     def test_fenced_pass_and_fail(self):
         # since 2026-09-09 the WHOLE message must be the fence ("entirely inside", "nothing outside the fence")

@@ -21,7 +21,9 @@ Semantics deliberately documented here
   plus a non-empty info-string matching the value), last line = a closing line of exactly three backticks, no closing
   line in between. Text before or after the fence fails; that is what every fenced instruction says ("entirely inside",
   "nothing outside the fence"). Before 2026-09-09 one matching paired fence anywhere in the message passed.
-- `json_schema` parses the WHOLE message: a valid object followed by trailing garbage fails; non-dict JSON fails.
+- `json_schema` parses the WHOLE message: a valid object followed by trailing garbage fails; non-dict JSON fails; since
+  2026-09-09 an object with keys beyond value['required'] fails too (the instruction names the keys and says "nothing
+  else"); an empty `required` list accepts any object.
 - `forbidden` (since 2026-09-09) searches the PROSE view of the text: fenced code blocks and inline code spans are
   removed first, unless the pattern itself contains a backtick (a ban on code spans must see them).
 """
@@ -95,6 +97,10 @@ def _m_json_schema(value, s):
     missing = [k for k in required if k not in obj]
     if missing:
         return False, "JSON object missing required keys: %s" % (missing,)
+    if required:
+        extra = [k for k in obj if k not in required]
+        if extra:
+            return False, "JSON object has keys beyond the named ones %s: %s" % (required, extra)
     return True, "ok"
 
 
@@ -296,7 +302,7 @@ MATCHERS: Dict[str, Matcher] = {
             "json_schema",
             _m_json_schema,
             SILENT_TURN_FAILS,
-            "the visible text is one JSON object containing value['required'] keys",
+            "the visible text is one JSON object whose keys are exactly value['required'] (any keys when empty)",
             value_key=lambda v: "any",
             witness=_w_json_schema,
             violation=lambda v: "not json",
