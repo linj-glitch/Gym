@@ -1781,9 +1781,13 @@ AGENT_FRAMEWORK_COMMIT={commit} \\
         llm_model_config = {
             "model": self.config.body.model or "",
             "base_url": "",  # May need to populate this
-            "temperature": self.config.inference_params["temperature"],
-            "top_p": self.config.inference_params["top_p"],
         }
+        # temperature/top_p are absent when the caller nulls them (Anthropic
+        # models reject explicit sampling params when thinking is enabled);
+        # tomlkit cannot serialize None, so only set the keys that exist.
+        for _sampling_key in ("temperature", "top_p"):
+            if self.config.inference_params.get(_sampling_key) is not None:
+                llm_model_config[_sampling_key] = self.config.inference_params[_sampling_key]
         max_output_tokens = self.config.inference_params.get("tokens_to_generate")
         if max_output_tokens is not None:
             llm_model_config["max_output_tokens"] = max_output_tokens
