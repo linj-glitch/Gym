@@ -26,6 +26,8 @@ Semantics deliberately documented here
   else"); an empty `required` list accepts any object.
 - `forbidden` (since 2026-09-09) searches the PROSE view of the text: fenced code blocks and inline code spans are
   removed first, unless the pattern itself contains a backtick (a ban on code spans must see them).
+- `length_bound` words (since 2026-09-09): whitespace tokens carrying a letter or digit, minus fence markers, pure
+  punctuation (bullets, dashes) and one leading bracketed tag such as `[PLAN]`.
 """
 
 import json

@@ -107,6 +107,20 @@ class TestMatchers(unittest.TestCase):
         self.assertEqual(one_turn_grade("one two", "length_bound",
                                         {"n": 3, "unit": "words", "dir": "min"}), 0)
 
+    def test_length_bound_words_ignores_markup(self):
+        # 2026-09-09: a leading bracketed tag, fence markers and pure-punctuation tokens are not words
+        cap8 = {"n": 8, "unit": "words", "dir": "max"}
+        self.assertEqual(one_turn_grade("[PLAN] Let me search the doc for usage examples.", "length_bound", cap8), 1)
+        self.assertEqual(one_turn_grade("(edit) Let me search the doc for usage examples.", "length_bound", cap8), 1)
+        self.assertEqual(one_turn_grade("Let me search the doc for usage examples now.", "length_bound", cap8), 0)
+        cap10 = {"n": 10, "unit": "words", "dir": "max"}
+        self.assertEqual(one_turn_grade("done\n```python\nChange completed. Min() returns oo, Max() returns -oo.\n```",
+                                        "length_bound", cap10), 1)  # 9 words; the two fence markers do not count
+        self.assertEqual(one_turn_grade("- alpha\n- beta\n* gamma", "length_bound", {"n": 3, "unit": "words", "dir": "max"}), 1)
+        # only ONE leading tag is free; a second bracketed token is a word
+        self.assertEqual(one_turn_grade("[PLAN] [x] a b", "length_bound", {"n": 3, "unit": "words", "dir": "max"}), 1)
+        self.assertEqual(one_turn_grade("[PLAN] [x] a b c", "length_bound", {"n": 3, "unit": "words", "dir": "max"}), 0)
+
     def test_length_bound_sentences(self):
         text = "First. Second! Third?"
         self.assertEqual(one_turn_grade(text, "length_bound",

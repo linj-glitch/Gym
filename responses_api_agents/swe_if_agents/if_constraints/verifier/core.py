@@ -189,6 +189,21 @@ def _strip_code(s):
     return _INLINE_CODE_RE.sub(" ", s)
 
 
+_LEADING_TAG_RE = re.compile(r"^[\[(][A-Za-z][\w -]*[\])]:?$")
+
+
+def _count_words(s):
+    """Words = whitespace-separated tokens that carry at least one letter or digit, minus markup: fence marker
+    tokens (``` or ```info), pure punctuation (list bullets `-` `*`, dashes, arrows) and ONE leading bracketed tag
+    such as `[PLAN]` or `(edit)` (a label the tag-opener constraints of this very pool require, not a word).
+    2026-09-09 (blind-judge audit): "[PLAN] Let me search the doc for usage examples." was 9 words to the old
+    `len(s.split())`, 8 to the judge; "done ```python ... ```" counted its two fence markers."""
+    tokens = s.split()
+    if tokens and _LEADING_TAG_RE.match(tokens[0]):
+        tokens = tokens[1:]
+    return len([t for t in tokens if not t.startswith("```") and any(ch.isalnum() for ch in t)])
+
+
 def _count_sentences(s):
     """Sentences = segments ended by . ! or ? (optionally followed by closing quotes/brackets) and containing at least
     one word character. 2026-09-09 (blind-judge audit of the 200v4 benchmark, two confirmed misgrades): a terminator
@@ -205,7 +220,7 @@ def _length_count(s, unit):
     if unit == "lines":
         return len([ln for ln in s.splitlines() if ln.strip()])
     if unit == "words":
-        return len(s.split())
+        return _count_words(s)
     if unit == "sentences":
         return _count_sentences(s)
     if unit == "chars":
