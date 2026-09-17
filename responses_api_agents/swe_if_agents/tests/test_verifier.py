@@ -61,6 +61,17 @@ class TestMatchers(unittest.TestCase):
         self.assertEqual(one_turn_grade("all plain text", "forbidden", r"[\U0001F600-\U0001F64F]"), 1)
         self.assertEqual(one_turn_grade("done \U0001F600", "forbidden", r"[\U0001F600-\U0001F64F]"), 0)
 
+    def test_forbidden_ignores_code_spans_and_blocks(self):
+        # 2026-09-09: banned words inside code are code, not prose
+        pron = r"\b(I|I'm|I've|I'd|me|my|mine)\b"
+        self.assertEqual(one_turn_grade("The imaginary unit `I` is used in sympy.", "forbidden", pron), 1)
+        self.assertEqual(one_turn_grade("Fixed.\n```py\nx = I * 2\n```\n", "forbidden", pron), 1)
+        self.assertEqual(one_turn_grade("I fixed it.", "forbidden", pron), 0)
+        self.assertEqual(one_turn_grade("Calls `get_connection_params()` once.", "forbidden", r"\([^)\n]*\)"), 1)
+        self.assertEqual(one_turn_grade("Calls it once (I think).", "forbidden", r"\([^)\n]*\)"), 0)
+        # a ban that targets backticks themselves must still see them
+        self.assertEqual(one_turn_grade("use `foo` here", "forbidden", r"`[^`\n]+`"), 0)
+
     def test_json_schema_pass_and_fail(self):
         self.assertEqual(one_turn_grade('{"a": 1}', "json_schema", {"required": ["a"]}), 1)
         self.assertEqual(one_turn_grade('{"b": 1}', "json_schema", {"required": ["a"]}), 0)

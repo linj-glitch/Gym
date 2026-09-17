@@ -22,6 +22,8 @@ Semantics deliberately documented here
   line in between. Text before or after the fence fails; that is what every fenced instruction says ("entirely inside",
   "nothing outside the fence"). Before 2026-09-09 one matching paired fence anywhere in the message passed.
 - `json_schema` parses the WHOLE message: a valid object followed by trailing garbage fails; non-dict JSON fails.
+- `forbidden` (since 2026-09-09) searches the PROSE view of the text: fenced code blocks and inline code spans are
+  removed first, unless the pattern itself contains a backtick (a ban on code spans must see them).
 """
 
 import json
@@ -36,6 +38,7 @@ from .core import (
     SILENT_TURN_NOT_GRADABLE,
     _length_count,
     _script_matches,
+    _strip_code,
     _whole_text_is_one_fence,
 )
 
@@ -73,7 +76,9 @@ def _m_regex(value, s):
 
 
 def _m_forbidden(value, s):
-    m = re.search(str(value), s)
+    pattern = str(value)
+    haystack = s if "`" in pattern else _strip_code(s)  # banned words inside code are code, not prose
+    m = re.search(pattern, haystack)
     ok = m is None
     return ok, ("ok" if ok else "forbidden pattern %r matched %r" % (value, m.group(0)[:40]))
 
@@ -282,7 +287,7 @@ MATCHERS: Dict[str, Matcher] = {
             "forbidden",
             _m_forbidden,
             SILENT_TURN_NOT_GRADABLE,
-            "re.search(value) finds NO match in the visible text",
+            "re.search(value) finds NO match in the prose view of the visible text (code spans/blocks removed)",
             witness=lambda v: None if re.search(str(v), "done") else "done",
             violation=_v_forbidden,
             examples=(";", r"(?i)\bin summary\b"),

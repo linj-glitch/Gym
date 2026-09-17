@@ -175,6 +175,20 @@ def _whole_text_is_one_fence(s, info_pattern):
     return True, "ok (the whole text is one ```%s fence)" % info
 
 
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+_FENCE_BLOCK_RE = re.compile(r"^[ \t]*```[^\n]*\n.*?^[ \t]*```[ \t]*$", re.S | re.M)
+
+
+def _strip_code(s):
+    """The text with fenced code blocks and inline code spans replaced by a space (prose only).
+
+    2026-09-09 (blind-judge audit): a ban on first-person pronouns matched the imaginary unit `I` inside a code span,
+    a ban on parenthetical remarks matched the `()` of a function name in backticks. Banned words in code are code,
+    not prose; the `forbidden` matcher searches the prose view unless the pattern itself targets backticks."""
+    s = _FENCE_BLOCK_RE.sub(" ", s)
+    return _INLINE_CODE_RE.sub(" ", s)
+
+
 def _count_sentences(s):
     """Sentences = segments ended by . ! or ? (optionally followed by closing quotes/brackets) and containing at least
     one word character. 2026-09-09 (blind-judge audit of the 200v4 benchmark, two confirmed misgrades): a terminator
