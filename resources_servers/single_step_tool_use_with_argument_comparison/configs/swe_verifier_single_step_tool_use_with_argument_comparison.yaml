@@ -1,0 +1,33 @@
+# Verifier-only GRPO reward for the pivot-RL journey (Lin, 2026-09-06).
+# SAME server code as swe_pivot_constrained_single_step_tool_use_with_argument_comparison.yaml
+# (constrained_app.py) with reward_mode=verifier: reward = 1 iff the deterministic
+# constraint verifier PASSES on the model's own single-step action; the teacher
+# action (expected_action) is ignored for reward and only reported as `matched`.
+# DIFFERENT instance names from the pivot yaml on purpose: a training run can
+# register both, and each data row selects its reward through agent_ref
+# (swe_pivot_* -> pivot reward, swe_verifier_* -> verifier reward), so the two
+# recipes can be switched -- or mixed -- without changing the run config.
+swe_verifier_single_step_tool_use_with_argument_comparison_resources_server:
+  resources_servers:
+    single_step_tool_use_with_argument_comparison:
+      entrypoint: constrained_app.py
+      domain: agent
+      reward_mode: verifier
+      similarity_full_credit: 0.8
+      verified: false
+      description: Verifier-only GRPO reward - deterministic constraint compliance of the sampled single-step action (teacher match reported, not rewarded).
+swe_verifier_single_step_tool_use_with_argument_comparison_agent:
+  responses_api_agents:
+    tool_simulation_agent:
+      entrypoint: app.py
+      resources_server:
+        type: resources_servers
+        name: swe_verifier_single_step_tool_use_with_argument_comparison_resources_server
+      model_server:
+        type: responses_api_models
+        name: policy_model
+      datasets:
+      - name: example
+        type: example
+        jsonl_fpath: resources_servers/single_step_tool_use_with_argument_comparison/data/example.jsonl
+        num_repeats: 1

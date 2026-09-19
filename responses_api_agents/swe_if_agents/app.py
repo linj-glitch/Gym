@@ -14,7 +14,8 @@ to grade:
   (mid-task injection);
 * ``sdg_item``: the constraints (verifier parameters), graded on the model-generated turns after the episode.
 
-The task outcome reward is untouched: ``reward`` is the SWE-bench verdict. The IF grades are attached as
+By default the task outcome reward is untouched: ``reward`` is the SWE-bench verdict (``reward_mode: outcome``);
+a training recipe may fold the IF grades into it (shaped / strict / tiered, see ``if_constraints/reward.py``). The IF grades are attached as
 ``if_constraints`` (one record per constraint, per gradable step) for downstream aggregation. Grading semantics
 live in ``if_constraints/`` (the constraint verifier package and its grader; see the README).
 
@@ -22,10 +23,10 @@ Requires an nv-OpenHands checkout that understands ``TOOL_NAME_OVERRIDES`` and `
 pinned in ``configs/swebench_opencode_if.yaml``).
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import orjson
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from responses_api_agents.swe_agents import app as swe
 from responses_api_agents.swe_if_agents.hooks import (
@@ -34,6 +35,18 @@ from responses_api_agents.swe_if_agents.hooks import (
     write_row_templates,
 )
 from responses_api_agents.swe_if_agents.if_constraints import grade_row
+from responses_api_agents.swe_if_agents.if_constraints.reward import (
+    DEFAULT_ALPHA,
+    DEFAULT_PARTIAL,
+    REWARD_MODES,
+    compute_if_reward,
+    resolve_reward_settings,
+)
+
+# The config's Literal has to spell the values out (a tuple cannot be spliced into Literal[...]); it is pinned to
+# reward.REWARD_MODES here and in tests/test_app_config.py.
+RewardMode = Literal["outcome", "shaped", "strict", "tiered"]
+assert tuple(RewardMode.__args__) == REWARD_MODES, "RewardMode drifted from reward.REWARD_MODES"
 
 
 class SWEIFWrapperConfig(swe.SWEBenchWrapperConfig):
@@ -52,6 +65,30 @@ class SWEIFWrapperConfig(swe.SWEBenchWrapperConfig):
             "(a reasoning-only turn), instead of ending the episode on it. 0 (default) keeps the harness behaviour."
         ),
     )
+    # ---- GRPO reward knob (2026-09-08). The benchmark leaves `reward` as the SWE verdict (outcome); a training
+    # recipe selects how the if_constraints records fold into the scalar. Per-row metadata (reward_mode,
+    # constraint_alpha, success_partial_reward; strings) overrides these. Semantics in if_constraints/reward.py.
+    # Validated HERE, at server start: an episode costs 30-60 min, so a typo must not surface after the first rollout.
+    reward_mode: RewardMode = Field(
+        default="outcome",
+        description=(
+            "outcome: reward = SWE verdict, records attached only. shaped: task * (1 + alpha * mean step-average over "
+            "applicable constraints). strict: task * 1[every applicable constraint all_pass] (nothing applicable -> 0). "
+            "tiered: task * (1 if all pass else success_partial_reward). Any mode but outcome needs if_grading: true."
+        ),
+    )
+    constraint_alpha: float = Field(default=DEFAULT_ALPHA, description="shaped mode multiplier on the constraint fraction")
+    success_partial_reward: float = Field(
+        default=DEFAULT_PARTIAL, ge=0.0, le=1.0, description="tiered mode credit for solved-but-violating, in [0, 1]"
+    )
+
+    @model_validator(mode="after")
+    def _reward_mode_needs_grading(self) -> "SWEIFWrapperConfig":
+        if self.reward_mode != "outcome" and not self.if_grading:
+            raise ValueError(
+                f"reward_mode={self.reward_mode!r} needs if_grading: true (the if_constraints records are the reward's input)"
+            )
+        return self
 
 
 class SWEIFVerifyResponse(swe.SWEBenchVerifyResponse):
@@ -59,6 +96,35 @@ class SWEIFVerifyResponse(swe.SWEBenchVerifyResponse):
     # all_pass, graded_turns, continuation_only, steps: [{turn, reward, detail, items}]}. None when the row has no
     # constraints.
     if_constraints: Optional[List[Dict[str, Any]]] = None
+
+    # ---- training scalars (if_constraints/reward.py). `reward` above is the outcome in outcome mode and the folded
+    # value otherwise; these decompose it. Scalars are promoted to per-agent metrics by the trainer, lists are not.
+    task_reward: float = 0.0
+    constraint_reward: Optional[float] = None       # mean step-average over applicable constraints; None if none
+    constraint_graded: bool = False                 # at least one constraint applicable ("not measured" is not compliance)
+    constraint_all_pass: bool = False
+    reward_mode: str = "outcome"
+    constraint_alpha: float = DEFAULT_ALPHA
+    success_partial_reward: float = 0.0
+    n_constraints: int = 0                          # declared constraints (the grader's <grading_error> pseudo-record excluded)
+    n_applicable: int = 0
+    n_grading_errors: int = 0                       # records with `error`; > 0 => reward passed through as task (every mode)
+    # True when this sample must not contribute to the gradient. NeMo-RL reads the mask from
+    # full_result.instance_config.mask_sample (SWEBenchWrapperInstanceConfig, set by the base wrapper on agent/eval
+    # timeouts and OOM; set here as well on a grading error in a non-outcome mode); this top-level copy mirrors that
+    # final value only so it is promoted to a per-agent metric — nothing reads it for masking.
+    mask_sample: bool = False
+    # A per-row reward override (metadata reward_mode / constraint_alpha / success_partial_reward) that was rejected
+    # and replaced by the config value; None when every override was accepted (see reward.resolve_reward_settings).
+    reward_settings_error: Optional[str] = None
+    continuation_only: bool = False
+    # per graded step: {turn (1-based assistant turn in the frame of response.output), passed, constraint, kind, detail};
+    # NeMo-RL maps `turn` onto its assistant message_log entries for grpo.constraint_violation_advantage.
+    turn_verdicts: List[Dict[str, Any]] = Field(default_factory=list)
+    first_violation_turn: Optional[int] = None
+    num_graded_turns: int = 0
+    num_violating_turns: int = 0
+    reward_components: Dict[str, float] = Field(default_factory=dict)
 
 
 class SWEIFWrapper(swe.SWEBenchWrapper):
@@ -112,8 +178,18 @@ class SWEIFWrapper(swe.SWEBenchWrapper):
             params.agent_script = params.agent_script_path.read_text()
         return params, dataset_processor
 
-    # ---- grading: the outcome reward stays; the IF grades ride along
+    # ---- grading: the IF grades ride along; `reward` is the outcome verdict in outcome mode and the fold otherwise
     async def run(self, body: swe.BaseRunRequest) -> SWEIFVerifyResponse:
+        # Per-row overrides are resolved before the episode and never raise: the config values were validated at
+        # server start (SWEIFWrapperConfig), and a malformed row value falls back to them with the error recorded on
+        # the response — a 30-60 min rollout is not lost to a bad metadata string.
+        mode, alpha, partial, settings_error = resolve_reward_settings(
+            body.responses_create_params.metadata,
+            self.config.reward_mode,
+            self.config.constraint_alpha,
+            self.config.success_partial_reward,
+            if_grading=self.config.if_grading,
+        )
         base = await super().run(body)
         records = None
         if self.config.if_grading:
@@ -124,7 +200,25 @@ class SWEIFWrapper(swe.SWEBenchWrapper):
             raw_input = rcp.get("input") if isinstance(rcp, dict) else getattr(rcp, "input", None)
             input_items = [i.model_dump() if hasattr(i, "model_dump") else i for i in (raw_input or [])]
             records = grade_row(body.responses_create_params.metadata or {}, input_items, output_items)
-        return SWEIFVerifyResponse(**base.model_dump(), if_constraints=records)
+        folded = compute_if_reward(records, base.reward, mode, alpha, partial)
+        fields = base.model_dump()
+        fields["reward"] = folded.pop("reward")
+        # A grading error in a training mode: the reward passed through as the task verdict (see reward.py) and the
+        # sample is masked from the gradient through the base wrapper's flag, the one NeMo-RL reads
+        # (full_result.instance_config.mask_sample). The top-level `mask_sample` mirrors the final flag as a metric.
+        grading_mask = bool(folded.pop("mask_sample"))
+        ic = fields.get("instance_config")
+        if not isinstance(ic, dict):
+            ic = ic.model_dump() if hasattr(ic, "model_dump") else dict(ic or {})
+        ic["mask_sample"] = bool(ic.get("mask_sample", False)) or grading_mask
+        fields["instance_config"] = ic
+        return SWEIFVerifyResponse(
+            **fields,
+            if_constraints=records,
+            **folded,
+            mask_sample=ic["mask_sample"],
+            reward_settings_error=settings_error,
+        )
 
 
 if __name__ == "__main__":

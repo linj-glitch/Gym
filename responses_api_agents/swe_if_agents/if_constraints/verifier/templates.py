@@ -27,6 +27,9 @@ def _require_visible_target(obligation, template):
             "tool_args only); got %r" % (template, target))
 
 
+MUST_SPEAK_DETAIL = "bare tool call, but the rule demanded a message before any tool (must_speak)"
+
+
 def _grade_visible(turn, obligation, prefix, policy="fail"):
     """Grade one in-scope turn. Returns a GradedStep, or None when the turn is silent.
 
@@ -51,6 +54,11 @@ def _grade_visible_turns(turns, trigger, obligation, resolver, policy, allowed, 
     for turn, prefix in select_turns(turns, trigger, resolver, allowed):
         if count_silent and not turn.visible_text.strip():
             n_silent += 1
+            if trigger.get("must_speak") and trigger.get("position") == "first_turn":
+                # The sentence demanded a message before any tool call (Lin, 2026-09-11): a bare opening tool call is
+                # a violation, not a no-answer. Every other silent turn keeps the 2026-09-09 ruling (not a step).
+                out.append(GradedStep(turn=turn.index, reward=0, detail=prefix + MUST_SPEAK_DETAIL))
+                continue
         step = _grade_visible(turn, obligation, prefix, policy)
         if step is not None:
             out.append(step)

@@ -35,15 +35,21 @@ def _sel_position(turns, trigger, resolver):
     # first thing you say" is the first message, not assistant item 0; before, index 0 — a bare opening tool call —
     # made every first-turn rule abstain, 19 rows of the 200v4 audit).
     first_text = next((t.index for t in turns if t.visible_text.strip()), None)
+    # must_speak (Lin, 2026-09-11): the sentence demanded a message BEFORE ANY TOOL ("the first message you write, before
+    # any tool result comes back", "whatever you write before touching any tool"), so the first turn is assistant item 0
+    # whatever it contains; a bare opening tool call is then a graded FAIL (templates._grade_visible_turns). Set by the
+    # sampler from the phrasing; the default (first turn with text) is unchanged for every other first-turn sentence.
+    must_speak = position == "first_turn" and bool(trigger.get("must_speak"))
+    first_index = (turns[0].index if turns else None) if must_speak else first_text
     out = []
     for turn in turns:
         fires = (
             position == "any_turn"
-            or (position == "first_turn" and turn.index == first_text)
+            or (position == "first_turn" and turn.index == first_index)
             or (position == "final" and turn.is_final)
         )
         if fires:
-            out.append((turn, "turn %d (position=%s): " % (turn.index, position)))
+            out.append((turn, "turn %d (position=%s%s): " % (turn.index, position, ", must_speak" if must_speak else "")))
     return out
 
 
@@ -121,11 +127,14 @@ TRIGGERS: Dict[str, Trigger] = {
         Trigger(
             "position",
             _sel_position,
-            "a turn by position: any_turn, first_turn (the first turn with visible text) or final (the last tool-free turn)",
+            "a turn by position: any_turn, first_turn (the first turn with visible text; with must_speak: assistant item 0, "
+            "a bare tool call there FAILS) or final (the last tool-free turn)",
+            owns=("must_speak",),
             missing=_missing_position,
             examples=(
                 ({"position": "any_turn"}, (0, 1, 2, 3)),
                 ({"position": "first_turn"}, (0,)),
+                ({"position": "first_turn", "must_speak": True}, (0,)),
                 ({"position": "final"}, (3,)),
             ),
         ),
