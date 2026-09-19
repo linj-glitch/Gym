@@ -118,7 +118,8 @@ def _embed_constraints(metadata: dict, param: dict) -> dict:
 
 
 def _load_batch(tag, params_path, results_path, scores_path):
-    if not (os.path.exists(params_path) and os.path.exists(results_path) and os.path.exists(scores_path)):
+    # the parity fixtures live under one user's lustre dir: unreadable (other users, CI) == absent -> the test skips
+    if not all(os.access(path, os.R_OK) for path in (params_path, results_path, scores_path)):
         return None
     params = {p["instance_id"]: p for p in json.load(open(params_path))["items"]}
     with open(results_path) as f:
