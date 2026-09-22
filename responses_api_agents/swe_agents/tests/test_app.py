@@ -3302,3 +3302,17 @@ def test_merge_reparents_a_new_live_child_to_the_stable_recorded_root() -> None:
 
     merged = merge_replay_subagent_trajectories(manifest, captured)
     assert merged[0]["parent_session_id"] == "recorded_root"
+
+
+def test_classify_agent_error_runtime_death_is_masked_kind():
+    """'Server process died' (OpenHands runtime server death) is an infra failure: classified on its own and masked
+    like OOM / timeouts instead of scoring as a genuine task failure (e2e-s35 smoke 19085735, 2026-09-21)."""
+    assert swe_app._classify_agent_error("RetryError[... RuntimeError('Server process died')]") == "runtime_died"
+    assert swe_app._classify_agent_error("Agent reached maximum iteration") == "max_iteration"
+    assert swe_app._classify_agent_error("something else") == "other"
+    assert swe_app._classify_agent_error(None) is None
+    # the masking tuple in process_single_datapoint must include the new kind
+    import inspect
+
+    src = inspect.getsource(swe_app.RunOpenHandsAgent if hasattr(swe_app, "RunOpenHandsAgent") else swe_app)
+    assert '"runtime_died"' in src and 'agent_error_kind in ("max_iteration", "context_window", "runtime_died")' in src

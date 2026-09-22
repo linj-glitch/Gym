@@ -2402,6 +2402,11 @@ def _classify_agent_error(err: Optional[str]) -> Optional[str]:
         return "context_window"
     if "stuck in a loop" in s.lower():
         return "stuck_in_loop"
+    if "server process died" in s.lower():
+        # OpenHands action-execution server (the runtime container) died under the agent: an infrastructure
+        # failure, not a policy outcome. Masked from the gradient like OOM / timeouts (e2e-s35 smoke 19085735,
+        # 2026-09-21: 5 of 256 rollouts in one step, 0 in the other steps).
+        return "runtime_died"
     return "other"
 
 
@@ -3890,6 +3895,7 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
         # 3) Agent itself timed out (wall-clock) — mask regardless of resolved.
         # 4) Memory watchdog killed the agent container (OOM).
         # 5) Memory watchdog killed the eval container.
+        # 6) The OpenHands runtime server died under the agent (infra failure) — reward is accidental.
         persisted_metrics = SWEBenchMetrics.model_validate(update_and_read_metrics(params.metrics_fpath))
         agent_error_kind = persisted_metrics.agent_error_kind
         eval_timed_out = bool(persisted_metrics.eval_timed_out)
@@ -3897,7 +3903,7 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
         oom_killed = bool(persisted_metrics.oom_killed)
         eval_oom_killed = bool(persisted_metrics.eval_oom_killed)
         if (
-            agent_error_kind in ("max_iteration", "context_window")
+            agent_error_kind in ("max_iteration", "context_window", "runtime_died")
             or eval_timed_out
             or agent_timed_out
             or oom_killed
