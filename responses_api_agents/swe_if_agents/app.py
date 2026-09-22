@@ -45,7 +45,7 @@ from responses_api_agents.swe_if_agents.if_constraints.reward import (
 
 # The config's Literal has to spell the values out (a tuple cannot be spliced into Literal[...]); it is pinned to
 # reward.REWARD_MODES here and in tests/test_app_config.py.
-RewardMode = Literal["outcome", "shaped", "strict", "tiered"]
+RewardMode = Literal["outcome", "shaped", "strict", "tiered", "gdpo"]
 assert tuple(RewardMode.__args__) == REWARD_MODES, "RewardMode drifted from reward.REWARD_MODES"
 
 
@@ -74,7 +74,7 @@ class SWEIFWrapperConfig(swe.SWEBenchWrapperConfig):
         description=(
             "outcome: reward = SWE verdict, records attached only. shaped: task * (1 + alpha * mean step-average over "
             "applicable constraints). strict: task * 1[every applicable constraint all_pass] (nothing applicable -> 0). "
-            "tiered: task * (1 if all pass else success_partial_reward). Any mode but outcome needs if_grading: true."
+            "tiered: task * (1 if all pass else success_partial_reward); gdpo: task + constraint with reward_components for NeMo-RL GDPO. Any mode but outcome needs if_grading: true."
         ),
     )
     constraint_alpha: float = Field(default=DEFAULT_ALPHA, description="shaped mode multiplier on the constraint fraction")
@@ -125,6 +125,7 @@ class SWEIFVerifyResponse(swe.SWEBenchVerifyResponse):
     num_graded_turns: int = 0
     num_violating_turns: int = 0
     reward_components: Dict[str, float] = Field(default_factory=dict)
+    constraint_step_avgs: Dict[str, float] = Field(default_factory=dict)
 
 
 class SWEIFWrapper(swe.SWEBenchWrapper):

@@ -11,6 +11,8 @@ training recipe keeps its reward semantics when it moves onto these records:
     shaped   reward = task * (1 + alpha * constraint)       when at least one constraint was applicable, else task
     strict   reward = task * 1[every applicable constraint all_pass]; nothing applicable -> 0
     tiered   reward = task * (1.0 if all applicable pass else partial); nothing applicable -> task * partial
+    gdpo     reward = task + constraint; reward_components = {task, constraint} (constraint absent when nothing applicable)
+             for NeMo-RL's GDPO per-channel advantages (2026-09-21 full-trace recipe)
 
 `constraint` is the mean over APPLICABLE records (n_steps > 0, no grading error) of the per-record step average
 (n_pass / n_steps). Task failure gives 0 in shaped/strict/tiered (multiplicative), so the constraint axis can never
@@ -44,7 +46,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-REWARD_MODES = ("outcome", "shaped", "strict", "tiered")
+REWARD_MODES = ("outcome", "shaped", "strict", "tiered", "gdpo")
 DEFAULT_ALPHA = 1.0
 DEFAULT_PARTIAL = 0.5
 
@@ -106,9 +108,22 @@ def compute_if_reward(
 
     components: Dict[str, float] = {"task": task}
     gate: Optional[float] = None
+    constraint_step_avgs = {str(r.get("id")): float(r.get("step_avg") or 0.0) for r in applicable}
     if mode == "outcome" or not declared or grading_errored:
         # benchmark mode, no constraints declared, or an unreliable grade: the task reward passes through unshaped
         reward = task
+    elif mode == "gdpo":
+        # Two decoupled channels for NeMo-RL's GDPO estimator (2026-09-21): `task` = SWE verdict, `constraint` = mean
+        # step-average over applicable constraints. The scalar reward is their sum (the RL bridge asserts
+        # reward == sum(reward_components)); GDPO group-normalises each channel separately and weights them
+        # (grpo.adv_estimator.reward_weights, alphabetical: constraint, task). When nothing is applicable the
+        # `constraint` component is ABSENT (not 0): the RL side masks it out of that channel's baseline, so silence
+        # or trigger avoidance is neither rewarded nor punished on the constraint axis.
+        if any_graded:
+            components["constraint"] = float(fraction)
+            reward = task + float(fraction)
+        else:
+            reward = task
     elif mode == "shaped":
         reward = task * (1.0 + float(alpha) * fraction) if any_graded else task
         gate = fraction
@@ -120,8 +135,11 @@ def compute_if_reward(
         reward = task * gate
     if gate is not None:
         components["constraint"] = float(gate)
-    for r in applicable:
-        components[f"constraint_{r.get('id')}"] = float(r.get("step_avg") or 0.0)
+    if mode != "gdpo":
+        # per-constraint components (legacy modes); under gdpo they would become extra GDPO channels, so they live in
+        # `constraint_step_avgs` instead
+        for r in applicable:
+            components[f"constraint_{r.get('id')}"] = float(r.get("step_avg") or 0.0)
 
     return {
         "reward": float(reward),
@@ -136,6 +154,7 @@ def compute_if_reward(
         "n_applicable": len(applicable),
         "n_grading_errors": len(errors),
         "mask_sample": bool(grading_errored and mode != "outcome"),
+        "constraint_step_avgs": constraint_step_avgs,
         "turn_verdicts": turn_verdicts,
         "first_violation_turn": violating[0] if violating else None,
         "num_graded_turns": len(graded_turns),

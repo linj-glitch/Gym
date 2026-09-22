@@ -63,6 +63,17 @@ class TestModes(unittest.TestCase):
         self.assertEqual(compute_if_reward(NOTHING_APPLICABLE, 1.0, "tiered")["reward"], 0.5)
         self.assertEqual(compute_if_reward(ONE_FAIL, 0.5, "tiered")["reward"], 0.25)
 
+    def test_gdpo_two_channels(self):
+        out = compute_if_reward(ONE_FAIL, 1.0, "gdpo")
+        self.assertAlmostEqual(out["reward"], 1.0 + out["constraint_reward"])
+        self.assertEqual(set(out["reward_components"]), {"task", "constraint"})  # no per-constraint channels
+        self.assertAlmostEqual(sum(out["reward_components"].values()), out["reward"])
+        self.assertTrue(out["constraint_step_avgs"])
+        out0 = compute_if_reward(NOTHING_APPLICABLE, 1.0, "gdpo")
+        self.assertEqual(out0["reward"], 1.0)
+        self.assertEqual(set(out0["reward_components"]), {"task"})  # constraint channel ABSENT, not 0
+        self.assertEqual(compute_if_reward(ALL_PASS, 0.0, "gdpo")["reward"], 1.0)  # task fail still earns the constraint channel
+
     def test_bad_settings_raise(self):
         with self.assertRaises(ValueError):
             compute_if_reward(ALL_PASS, 1.0, "bogus")
