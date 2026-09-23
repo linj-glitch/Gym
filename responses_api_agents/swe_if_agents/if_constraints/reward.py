@@ -13,6 +13,10 @@ training recipe keeps its reward semantics when it moves onto these records:
     tiered   reward = task * (1.0 if all applicable pass else partial); nothing applicable -> task * partial
     gdpo     reward = task + constraint; reward_components = {task, constraint} (constraint absent when nothing applicable)
              for NeMo-RL's GDPO per-channel advantages (2026-09-21 full-trace recipe)
+    gdpo_gated  as gdpo, but the constraint component is ABSENT unless the task was solved (task >= 1): compliance is
+             credited only among solved rollouts and an all-fail group carries no constraint signal at all. Lin
+             2026-09-23, after e2e-s35-50: with plain gdpo the constraint channel was the only gradient on the ~1/3
+             all-fail groups and trained "speak every turn, end with a compliant stub" instead of solving.
 
 `constraint` is the mean over APPLICABLE records (n_steps > 0, no grading error) of the per-record step average
 (n_pass / n_steps). Task failure gives 0 in shaped/strict/tiered (multiplicative), so the constraint axis can never
@@ -46,7 +50,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-REWARD_MODES = ("outcome", "shaped", "strict", "tiered", "gdpo")
+REWARD_MODES = ("outcome", "shaped", "strict", "tiered", "gdpo", "gdpo_gated")
 DEFAULT_ALPHA = 1.0
 DEFAULT_PARTIAL = 0.5
 
@@ -112,14 +116,16 @@ def compute_if_reward(
     if mode == "outcome" or not declared or grading_errored:
         # benchmark mode, no constraints declared, or an unreliable grade: the task reward passes through unshaped
         reward = task
-    elif mode == "gdpo":
+    elif mode in ("gdpo", "gdpo_gated"):
         # Two decoupled channels for NeMo-RL's GDPO estimator (2026-09-21): `task` = SWE verdict, `constraint` = mean
         # step-average over applicable constraints. The scalar reward is their sum (the RL bridge asserts
         # reward == sum(reward_components)); GDPO group-normalises each channel separately and weights them
         # (grpo.adv_estimator.reward_weights, alphabetical: constraint, task). When nothing is applicable the
         # `constraint` component is ABSENT (not 0): the RL side masks it out of that channel's baseline, so silence
         # or trigger avoidance is neither rewarded nor punished on the constraint axis.
-        if any_graded:
+        # gdpo_gated: the same absence when the task failed, so the channel's group baseline/std are computed over
+        # solved rollouts only and failed rollouts get advantage 0 on this axis (task axis still carries their 0).
+        if any_graded and (mode == "gdpo" or task >= 1.0):
             components["constraint"] = float(fraction)
             reward = task + float(fraction)
         else:
@@ -135,7 +141,7 @@ def compute_if_reward(
         reward = task * gate
     if gate is not None:
         components["constraint"] = float(gate)
-    if mode != "gdpo":
+    if mode not in ("gdpo", "gdpo_gated"):
         # per-constraint components (legacy modes); under gdpo they would become extra GDPO channels, so they live in
         # `constraint_step_avgs` instead
         for r in applicable:

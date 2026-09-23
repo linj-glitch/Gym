@@ -74,6 +74,17 @@ class TestModes(unittest.TestCase):
         self.assertEqual(set(out0["reward_components"]), {"task"})  # constraint channel ABSENT, not 0
         self.assertEqual(compute_if_reward(ALL_PASS, 0.0, "gdpo")["reward"], 1.0)  # task fail still earns the constraint channel
 
+    def test_gdpo_gated_credits_compliance_only_when_solved(self):
+        solved = compute_if_reward(ONE_FAIL, 1.0, "gdpo_gated")
+        self.assertEqual(set(solved["reward_components"]), {"task", "constraint"})
+        self.assertAlmostEqual(solved["reward"], 1.0 + solved["constraint_reward"])
+        failed = compute_if_reward(ALL_PASS, 0.0, "gdpo_gated")
+        self.assertEqual(set(failed["reward_components"]), {"task"})  # constraint ABSENT on a failed task, not 0
+        self.assertEqual(failed["reward"], 0.0)
+        self.assertEqual(failed["constraint_reward"], 1.0)  # still measured for the metrics
+        self.assertTrue(failed["constraint_graded"])
+        self.assertEqual(set(compute_if_reward(NOTHING_APPLICABLE, 1.0, "gdpo_gated")["reward_components"]), {"task"})
+
     def test_bad_settings_raise(self):
         with self.assertRaises(ValueError):
             compute_if_reward(ALL_PASS, 1.0, "bogus")

@@ -45,7 +45,7 @@ from responses_api_agents.swe_if_agents.if_constraints.reward import (
 
 # The config's Literal has to spell the values out (a tuple cannot be spliced into Literal[...]); it is pinned to
 # reward.REWARD_MODES here and in tests/test_app_config.py.
-RewardMode = Literal["outcome", "shaped", "strict", "tiered", "gdpo"]
+RewardMode = Literal["outcome", "shaped", "strict", "tiered", "gdpo", "gdpo_gated"]
 assert tuple(RewardMode.__args__) == REWARD_MODES, "RewardMode drifted from reward.REWARD_MODES"
 
 
