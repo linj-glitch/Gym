@@ -3314,7 +3314,7 @@ def test_classify_agent_error_runtime_death_is_masked_kind():
     # the masking tuple in process_single_datapoint: infra kinds masked, max_iteration graded (2026-09-23)
     import inspect
 
-    src = inspect.getsource(swe_app.RunOpenHandsAgent if hasattr(swe_app, "RunOpenHandsAgent") else swe_app)
+    src = inspect.getsource(swe_app)  # the mask decision lives in the wrapper's process_single_datapoint
     assert 'agent_error_kind in ("context_window", "runtime_died")' in src
     assert '"max_iteration", "context_window", "runtime_died"' not in src
 
