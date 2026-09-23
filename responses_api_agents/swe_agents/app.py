@@ -3889,8 +3889,11 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
             metrics_to_update["resolved"] = False
 
         # Decide whether to mask this sample from the GRPO gradient.
-        # 1) Patch passed eval but agent did not actually submit (hit max-turns
-        #    or blew the context window) — the reward is accidental.
+        # 1) Patch passed eval but agent did not actually submit because it blew the
+        #    context window — the reward is accidental. Hitting max-turns is NOT masked
+        #    (Lin, 2026-09-23): the patch on disk is graded like a context-exhausted
+        #    rollout, so a policy that wanders for 200 turns gets the failure signal
+        #    (e2e-s35-50: 2.2% of train rollouts, 19->24 of 100 fresh bench tasks by step 11).
         # 2) Final eval step timed out — reward is unreliable.
         # 3) Agent itself timed out (wall-clock) — mask regardless of resolved.
         # 4) Memory watchdog killed the agent container (OOM).
@@ -3903,7 +3906,7 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
         oom_killed = bool(persisted_metrics.oom_killed)
         eval_oom_killed = bool(persisted_metrics.eval_oom_killed)
         if (
-            agent_error_kind in ("max_iteration", "context_window", "runtime_died")
+            agent_error_kind in ("context_window", "runtime_died")
             or eval_timed_out
             or agent_timed_out
             or oom_killed
