@@ -307,6 +307,11 @@ class SWEBenchMetrics(BaseModel):
 
     # Failure-mode signals used to decide mask_sample downstream.
     agent_error_kind: Optional[str] = None
+    # Episode ended without the agent finishing on its own (Lin 2026-09-23): "max_iteration" (turn cap),
+    # "stuck_in_loop" (OpenHands loop detector) or "context_exhausted" (model server returned empty replies).
+    # `resolved` keeps the measured test verdict; the task reward is 0 for these (see _unfinished_exit_kind).
+    unfinished_exit: Optional[str] = None
+    unfinished: Optional[bool] = None
     agent_timed_out: Optional[bool] = None
     eval_timed_out: Optional[bool] = None
 
@@ -2392,6 +2397,31 @@ class OpenCodeHarnessProcessor(BaseDatasetHarnessProcessor):
 ########################################
 
 
+def _unfinished_exit_kind(agent_error_kind: Optional[str], per_turn_metrics: Optional[dict]) -> Optional[str]:
+    """Why the episode ended without the agent finishing, or None.
+
+    Three exits share one property: the agent never decided it was done, so a patch left on disk is an accident of
+    where the cut fell. Under RL that patch must not earn task credit (e2e-s35-50, 2026-09-23: loops 0 -> 29% of fresh
+    bench tasks while 15-34% of them still scored on the patch; 250-turn wandering was masked and invisible).
+      max_iteration      OpenHands stopped the agent at the turn cap
+      stuck_in_loop      OpenHands' StuckDetector killed the episode (4 identical action/observation pairs, ...)
+      context_exhausted  the model server answered with empty replies (prompt no longer fits the context window):
+                         OpenHands records them as zero-usage calls after real ones and then finishes the episode
+    """
+    if agent_error_kind in ("max_iteration", "stuck_in_loop"):
+        return agent_error_kind
+    if agent_error_kind == "context_window":
+        return "context_exhausted"
+    usages = (per_turn_metrics or {}).get("token_usages") or []
+    calls = [u for u in usages if isinstance(u, dict)]
+    if len(calls) >= 2:
+        real = [i for i, u in enumerate(calls) if (u.get("prompt_tokens") or 0) > 0]
+        last = calls[-1]
+        if real and (last.get("prompt_tokens") or 0) == 0 and (last.get("completion_tokens") or 0) == 0:
+            return "context_exhausted"
+    return None
+
+
 def _classify_agent_error(err: Optional[str]) -> Optional[str]:
     if not err:
         return None
@@ -3905,6 +3935,9 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
         agent_timed_out = bool(persisted_metrics.agent_timed_out)
         oom_killed = bool(persisted_metrics.oom_killed)
         eval_oom_killed = bool(persisted_metrics.eval_oom_killed)
+        unfinished_exit = _unfinished_exit_kind(agent_error_kind, persisted_metrics.per_turn_metrics)
+        metrics_to_update["unfinished_exit"] = unfinished_exit
+        metrics_to_update["unfinished"] = unfinished_exit is not None
         if (
             agent_error_kind in ("context_window", "runtime_died")
             or eval_timed_out
@@ -4044,7 +4077,8 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
             return SWEBenchVerifyResponse(
                 responses_create_params=responses_create_params,
                 response=response,
-                reward=1.0 if metrics.resolved else 0.0,
+                # task credit only for episodes the agent finished on its own (unfinished exits keep resolved as a metric)
+                reward=1.0 if (metrics.resolved and not metrics.unfinished) else 0.0,
                 **metrics.model_dump(),
                 instance_config=SWEBenchWrapperInstanceConfig.model_validate_json(
                     metadata["instance_config"]

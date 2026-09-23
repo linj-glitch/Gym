@@ -3317,3 +3317,49 @@ def test_classify_agent_error_runtime_death_is_masked_kind():
     src = inspect.getsource(swe_app.RunOpenHandsAgent if hasattr(swe_app, "RunOpenHandsAgent") else swe_app)
     assert 'agent_error_kind in ("context_window", "runtime_died")' in src
     assert '"max_iteration", "context_window", "runtime_died"' not in src
+
+
+def test_unfinished_exit_kind_covers_the_three_cut_offs():
+    """Turn cap, loop detector and context exhaustion are 'unfinished' exits (Lin 2026-09-23); a normal finish is not."""
+    f = swe_app._unfinished_exit_kind
+    assert f("max_iteration", None) == "max_iteration"
+    assert f("stuck_in_loop", None) == "stuck_in_loop"
+    assert f("context_window", None) == "context_exhausted"
+    # empty model-server replies after real calls = context exhausted (OpenHands then finishes the episode)
+    usages = [{"prompt_tokens": 6000, "completion_tokens": 40}, {"prompt_tokens": 130393, "completion_tokens": 12},
+              {"prompt_tokens": 0, "completion_tokens": 0}, {"prompt_tokens": 0, "completion_tokens": 0}]
+    assert f(None, {"token_usages": usages}) == "context_exhausted"
+    assert f(None, {"token_usages": usages[:2]}) is None
+    assert f(None, {"token_usages": [{"prompt_tokens": 0, "completion_tokens": 0}]}) is None  # never had a real call
+    assert f("other", {"token_usages": usages[:2]}) is None
+    assert f(None, None) is None
+
+
+@pytest.mark.asyncio
+async def test_run_unfinished_exit_gets_no_task_credit(monkeypatch) -> None:
+    """A resolved patch left behind by a loop-detector exit keeps resolved=True but scores task 0."""
+    wrapper = _create_wrapper(monkeypatch)
+    mock_response = NeMoGymResponse(
+        id="swebench-test", created_at=123, model="test-model", object="response", output=[],
+        parallel_tool_calls=True, tool_choice="auto", tools=[],
+        metadata={
+            "input": "[]",
+            "metrics": json.dumps({"resolved": True, "patch_exists": True, "agent_error_kind": "stuck_in_loop",
+                                   "unfinished_exit": "stuck_in_loop", "unfinished": True}),
+            "instance_config": _make_instance_config(tempfile.mkdtemp()).model_dump_json(),
+        },
+    )
+    with patch.object(SWEBenchWrapper, "responses", new_callable=AsyncMock, return_value=mock_response):
+        from nemo_gym.base_resources_server import BaseRunRequest
+
+        body = BaseRunRequest(
+            responses_create_params=NeMoGymResponseCreateParamsNonStreaming(
+                model="test-model", input=[],
+                metadata={"problem_statement": "Fix", "instance_id": "test-1", "base_commit": "abc",
+                          "dataset_name": "SWE-bench", "split": "test", "instance_dict": "{}"},
+            )
+        )
+        result = await wrapper.run(body)
+        assert result.resolved is True
+        assert result.unfinished is True and result.unfinished_exit == "stuck_in_loop"
+        assert result.reward == 0.0
