@@ -167,6 +167,18 @@ class SWEBenchWrapperConfig(BaseResponsesAPIAgentConfig):
         description="Path to the dataset for SWE-bench evaluation",
     )
 
+    scrub_git_history: bool = Field(
+        default=True,
+        description=(
+            "Before the agent starts, delete every git ref in the task repo except the branch HEAD points at, remove "
+            "remotes, expire reflogs and gc. Task images ship history beyond the base commit (nv-internal-1: origin/main "
+            "9 months ahead of HEAD plus reflog; swe-bench-ext: 2x the commits reachable via side tags/branches). The "
+            "OpenHands harness's own reset drops descendants of the base commit but keeps non-descendant refs, so a fix "
+            "cherry-picked onto a release branch or a PR branch based off an older commit stays reachable through "
+            "`git log --all` / `git show <sha>` (e2e-s35-v2: 1% of rollouts ran such commands, resolving at 0.74 vs 0.62). "
+            "Patch capture is unaffected: HEAD and the working tree are untouched."
+        ),
+    )
     verify_golden_patch: bool = Field(
         default=False,
         description=(
@@ -1892,8 +1904,11 @@ AGENT_FRAMEWORK_COMMIT={commit} \\
         baseline_fix = _extract_instance_dict(data_point).get("baseline_fix", "")
         baseline_fix_cmd = f"{{ {baseline_fix} >/tmp/baseline_fix.log 2>&1 || true; }} && " if baseline_fix else ""
 
+        git_scrub_cmd = _git_history_scrub_cmd() if self.config.scrub_git_history else ""
+
         agent_main_cmd = (
             f"{workspace_check_cmd}"
+            f"{git_scrub_cmd}"
             # Add miniforge bin to PATH (for tmux, node, poetry, etc.)
             "mkdir -p /tmp/ && "
             "export PATH=/openhands_setup/miniforge3/bin:$PATH && "
@@ -2317,6 +2332,7 @@ class OpenCodeHarnessProcessor(BaseDatasetHarnessProcessor):
             f"echo {shlex.quote(config_str)} >{config_file_path} && "
             f"{conda_activate_cmd}"
             f"{denovoswe_clean_cmd}"
+            f"{_git_history_scrub_cmd(workspace_path) if self.config.scrub_git_history else ''}"
             f"{baseline_fix_cmd}"
             "./evaluation/benchmarks/swe_bench/scripts/run_infer.sh "
             f"    {self.config.agent_framework_commit} "  # $1: opencode commit
@@ -2420,6 +2436,33 @@ def _unfinished_exit_kind(agent_error_kind: Optional[str], per_turn_metrics: Opt
         if real and (last.get("prompt_tokens") or 0) == 0 and (last.get("completion_tokens") or 0) == 0:
             return "context_exhausted"
     return None
+
+
+GIT_SCRUB_CANDIDATE_DIRS = "/workspace/* /testbed /app /repo /src /code"
+
+
+def _git_history_scrub_cmd(workspace_path: str = "") -> str:
+    """Shell prefix that leaves the task repo with HEAD's branch as its only ref (see scrub_git_history).
+
+    Runs inside the agent container before the harness starts. For every candidate repo dir (the resolved
+    workspace first, then the usual mount points) that has a .git: keep only the ref HEAD points at (all refs when
+    HEAD is detached), remove remotes, drop temporary op refs, expire reflogs, gc. Best effort: output goes to the
+    agent log prefixed [git-scrub]; a failure never blocks the rollout.
+    """
+    dirs = " ".join(x for x in (shlex.quote(workspace_path) if workspace_path else "", GIT_SCRUB_CANDIDATE_DIRS) if x)
+    return (
+        "{ for _d in " + dirs + "; do "
+        '[ -d "$_d/.git" ] || continue; '
+        '( cd "$_d" && '
+        'cur=$(git symbolic-ref -q HEAD || true) && '
+        'git for-each-ref --format="delete %(refname)" | { if [ -n "$cur" ]; then grep -v -x "delete $cur"; else cat; fi; } | git update-ref --stdin && '
+        'for _r in $(git remote); do git remote remove "$_r"; done; '
+        '_gd=$(git rev-parse --git-dir) && rm -f "$_gd"/FETCH_HEAD "$_gd"/ORIG_HEAD "$_gd"/MERGE_HEAD "$_gd"/CHERRY_PICK_HEAD "$_gd"/REVERT_HEAD "$_gd"/BISECT_HEAD "$_gd"/AUTO_MERGE && '
+        "git reflog expire --expire=now --expire-unreachable=now --all && "
+        # no log file: a failed redirect would silently skip the whole compound command; stderr goes to the agent log
+        'git gc --prune=now -q ) 2>&1 | sed "s/^/[git-scrub] /" >&2; '
+        "done; } && "
+    )
 
 
 def _classify_agent_error(err: Optional[str]) -> Optional[str]:

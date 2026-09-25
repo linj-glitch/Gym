@@ -3363,3 +3363,16 @@ async def test_run_unfinished_exit_gets_no_task_credit(monkeypatch) -> None:
         assert result.resolved is True
         assert result.unfinished is True and result.unfinished_exit == "stuck_in_loop"
         assert result.reward == 0.0
+
+
+def test_git_history_scrub_cmd_keeps_only_heads_branch():
+    """The pre-agent scrub deletes every ref but HEAD's branch, removes remotes, expires reflogs and gcs (2026-09-24)."""
+    cmd = swe_app._git_history_scrub_cmd("/workspace/repo")
+    assert cmd.startswith("{ for _d in /workspace/repo /workspace/*")
+    for needle in ('git for-each-ref --format="delete %(refname)"', "git update-ref --stdin", "git remote remove",
+                   "git reflog expire --expire=now --expire-unreachable=now --all", "git gc --prune=now -q", "done; } && "):
+        assert needle in cmd
+    assert 'grep -v -x "delete $cur"' in cmd  # HEAD's branch survives
+    assert swe_app._git_history_scrub_cmd().startswith("{ for _d in /workspace/*")
+    src = inspect.getsource(swe_app) if "inspect" in globals() else __import__("inspect").getsource(swe_app)
+    assert src.count("self.config.scrub_git_history") == 2  # both harness paths (openhands, opencode)
