@@ -1,0 +1,52 @@
+claude_code_sandboxed_agent:
+  responses_api_agents:
+    claude_code_sandboxed_agent:
+      entrypoint: app.py
+      num_workers: 4
+      domain: agent
+      description: Claude Code CLI harness running in a provider sandbox.
+      value: Benchmark Claude Code on sandboxed SWE tasks with model traffic served by an Anthropic-compatible endpoint (e.g. a Switchyard route).
+      resources_server:
+        type: resources_servers
+        name: swebench_resources_server
+
+      debug: false
+
+      # Anthropic-compatible endpoint ROOT (client appends /v1/messages) —
+      # typically a Switchyard proxy reachable from inside the sandbox.
+      anthropic_base_url: ${oc.env:CLAUDE_CODE_ANTHROPIC_BASE_URL,null}
+      anthropic_auth_token: ${oc.env:CLAUDE_CODE_ANTHROPIC_AUTH_TOKEN,dummy}
+      # Model the CLI requests; for Switchyard this is a route id.
+      claude_model: ${policy_model_name}
+      # Network installer pin, used only when the pre-staged pair below is unset.
+      claude_code_version: ${oc.env:CLAUDE_CODE_VERSION,stable}
+      # Pre-staged CLI (set both or neither): `bash <script> --binary <binary>`
+      # runs instead of the network installer. Mount or upload the binary into
+      # the sandbox and point these at it.
+      remote_claude_install_script_path: null
+      remote_claude_binary_path: null
+      claude_max_turns: null
+      # CLAUDE_CODE_MAX_OUTPUT_TOKENS; null keeps the CLI default.
+      claude_max_output_tokens: null
+      # Skip native auto-discovery (hooks/plugins/MCP/memory/CLAUDE.md) for an
+      # isolated, reproducible runtime; mirrors claude_code_agent's `bare`.
+      bare: true
+      # Forwarded per rollout via ANTHROPIC_CUSTOM_HEADERS so router session
+      # affinity (e.g. Switchyard escalation latching) works. null disables.
+      session_header_name: x-switchyard-session-id
+
+      sandbox_provider: sandbox
+      sandbox_config:
+        ttl_s: 18000
+        ready_timeout_s: 1200
+        resources:
+          cpu: 2
+          memory_mib: 8192
+          disk_gib: 30
+        provider_options: {}
+        metadata:
+          harness: claude-code
+
+      sandbox_timeout: 10800  # 3hr default for harness execution
+
+      datasets: []
