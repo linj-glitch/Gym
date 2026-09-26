@@ -1,0 +1,53 @@
+codex_sandboxed_agent:
+  responses_api_agents:
+    codex_sandboxed_agent:
+      entrypoint: app.py
+      num_workers: 4
+      domain: agent
+      description: Codex CLI harness running in a provider sandbox.
+      value: Benchmark Codex on sandboxed SWE tasks with model traffic served by an OpenAI Responses-compatible endpoint (e.g. a Switchyard route).
+      resources_server:
+        type: resources_servers
+        name: swebench_resources_server
+
+      debug: false
+
+      # OpenAI-compatible endpoint INCLUDING /v1 (Codex appends /responses) —
+      # typically a Switchyard proxy reachable from inside the sandbox.
+      openai_base_url: ${oc.env:CODEX_OPENAI_BASE_URL,null}
+      openai_api_key: ${oc.env:CODEX_OPENAI_API_KEY,local}
+      # Model the CLI requests; for Switchyard this is a route id.
+      codex_model: ${policy_model_name}
+      # Release for the in-sandbox network installer, used only when the
+      # pre-staged pair below is unset.
+      codex_version: ${oc.env:CODEX_VERSION,0.144.4}
+      # Pre-staged CLI (set both or neither): `bash <script> --binary <binary>`
+      # runs instead of the network installer.
+      remote_codex_install_script_path: null
+      remote_codex_binary_path: null
+      reasoning_effort: null
+      # A route id has no Codex catalog entry; state the served window and the
+      # reply cap so Codex's context management and max_output_tokens match.
+      model_context_window: null
+      model_max_output_tokens: null
+      stream_idle_timeout_ms: null
+      # Put on the provider's http_headers per rollout so router session
+      # affinity (e.g. Switchyard escalation latching) works. null disables.
+      session_header_name: x-switchyard-session-id
+      extra_config: {}
+
+      sandbox_provider: sandbox
+      sandbox_config:
+        ttl_s: 18000
+        ready_timeout_s: 1200
+        resources:
+          cpu: 2
+          memory_mib: 8192
+          disk_gib: 30
+        provider_options: {}
+        metadata:
+          harness: codex
+
+      sandbox_timeout: 10800  # 3hr default for harness execution
+
+      datasets: []
