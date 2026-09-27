@@ -124,7 +124,8 @@ class SWEIFVerifyResponse(swe.SWEBenchVerifyResponse):
     first_violation_turn: Optional[int] = None
     num_graded_turns: int = 0
     num_violating_turns: int = 0
-    reward_components: Dict[str, float] = Field(default_factory=dict)
+    reward_components: Dict[str, float] = Field(default_factory=dict)   # gdpo modes only (NeMo-RL contract: sum == reward)
+    reward_breakdown: Dict[str, float] = Field(default_factory=dict)    # legacy modes' gate / per-constraint decomposition
     constraint_step_avgs: Dict[str, float] = Field(default_factory=dict)
 
 

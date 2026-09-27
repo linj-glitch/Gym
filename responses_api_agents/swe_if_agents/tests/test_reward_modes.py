@@ -139,7 +139,8 @@ class TestPassThrough(unittest.TestCase):
         self.assertEqual(out["num_graded_turns"], 3)
         self.assertEqual(out["num_violating_turns"], 1)
         self.assertFalse(out["constraint_all_pass"])
-        self.assertEqual(out["reward_components"], {"task": 1.0, "constraint": 0.0, "constraint_a": 2 / 3, "constraint_b": 1.0})
+        self.assertEqual(out["reward_breakdown"], {"task": 1.0, "constraint": 0.0, "constraint_a": 2 / 3, "constraint_b": 1.0})
+        self.assertEqual(out["reward_components"], {})  # legacy modes never emit the NeMo-RL multi-reward contract
 
     def test_trajectory_scoped_steps_gate_the_reward_but_have_no_turn(self):
         """A tool_choice step (grader turn -1) has no assistant turn: it must not become turn_verdicts turn 0 (NeMo-RL's
@@ -150,7 +151,8 @@ class TestPassThrough(unittest.TestCase):
         self.assertEqual([(v["turn"], v["constraint"]) for v in out["turn_verdicts"]], [(1, "a"), (2, "a")])
         self.assertIsNone(out["first_violation_turn"])
         self.assertEqual((out["num_graded_turns"], out["num_violating_turns"]), (2, 0))
-        self.assertEqual(out["reward_components"]["constraint_tc"], 0.0)
+        self.assertEqual(out["reward_breakdown"]["constraint_tc"], 0.0)
+        self.assertEqual(out["reward_components"], {})
         self.assertEqual(out["n_applicable"], 2)
 
     def test_inapplicable_records_are_counted_not_graded(self):
@@ -200,3 +202,27 @@ class TestRowOverrides(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRewardComponentsContract(unittest.TestCase):
+    """NeMo-RL asserts reward == sum(reward_components) whenever the dict is non-empty (nemo_gym.validate_reward_components_
+    match_scalar). Only the gdpo modes are sums; shaped/strict/tiered must keep the dict EMPTY and report their decomposition
+    in reward_breakdown (2026-09-27: chain e2e-s35-v6 runs `shaped` through the trainer)."""
+
+    def test_only_gdpo_modes_emit_components_and_they_sum_to_the_reward(self):
+        for mode in REWARD_MODES:
+            for records, task in ((ONE_FAIL, 1.0), (ALL_PASS, 1.0), (ONE_FAIL, 0.0), (NOTHING_APPLICABLE, 1.0)):
+                out = compute_if_reward(records, task, mode, alpha=0.5)
+                if mode in ("gdpo", "gdpo_gated"):
+                    self.assertTrue(out["reward_components"], (mode, records))
+                    self.assertAlmostEqual(sum(out["reward_components"].values()), out["reward"], msg=mode)
+                    self.assertEqual(out["reward_breakdown"], {})
+                else:
+                    self.assertEqual(out["reward_components"], {}, (mode, records))
+
+    def test_shaped_breakdown_carries_the_fraction_gate(self):
+        out = compute_if_reward(ONE_FAIL, 1.0, "shaped", alpha=0.5)
+        self.assertAlmostEqual(out["reward"], 1.0 + 0.5 * 5 / 6)
+        self.assertAlmostEqual(out["reward_breakdown"]["constraint"], 5 / 6)
+        self.assertEqual(out["reward_breakdown"]["task"], 1.0)
+        self.assertEqual(compute_if_reward(ONE_FAIL, 0.0, "shaped", alpha=0.5)["reward"], 0.0)  # failed task earns nothing

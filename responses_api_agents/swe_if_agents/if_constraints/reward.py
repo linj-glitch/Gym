@@ -12,6 +12,7 @@ training recipe keeps its reward semantics when it moves onto these records:
     strict   reward = task * 1[every applicable constraint all_pass]; nothing applicable -> 0
     tiered   reward = task * (1.0 if all applicable pass else partial); nothing applicable -> task * partial
     gdpo     reward = task + constraint; reward_components = {task, constraint} (constraint absent when nothing applicable)
+             (only the gdpo modes emit reward_components; the other modes put their decomposition in reward_breakdown)
              for NeMo-RL's GDPO per-channel advantages (2026-09-21 full-trace recipe)
     gdpo_gated  as gdpo, but the constraint component is ABSENT unless the task was solved (task >= 1): compliance is
              credited only among solved rollouts and an all-fail group carries no constraint signal at all. Lin
@@ -139,13 +140,18 @@ def compute_if_reward(
     else:  # tiered
         gate = 1.0 if all_pass else float(partial)
         reward = task * gate
-    if gate is not None:
-        components["constraint"] = float(gate)
+    # `reward_components` is the NeMo-RL multi-reward CONTRACT: when present, the bridge asserts reward == sum(components)
+    # and GDPO z-scores each channel. Only the gdpo modes satisfy it. The legacy modes' decomposition (gate, per-constraint
+    # step averages) is diagnostic and goes to `reward_breakdown` instead (2026-09-27: `shaped` = task * (1 + alpha *
+    # fraction) is NOT a sum, and emitting it as components would have aborted the trainer at the first batch).
+    breakdown: Dict[str, float] = {}
     if mode not in ("gdpo", "gdpo_gated"):
-        # per-constraint components (legacy modes); under gdpo they would become extra GDPO channels, so they live in
-        # `constraint_step_avgs` instead
+        breakdown = dict(components)
+        if gate is not None:
+            breakdown["constraint"] = float(gate)
         for r in applicable:
-            components[f"constraint_{r.get('id')}"] = float(r.get("step_avg") or 0.0)
+            breakdown[f"constraint_{r.get('id')}"] = float(r.get("step_avg") or 0.0)
+        components = {}
 
     return {
         "reward": float(reward),
@@ -167,6 +173,7 @@ def compute_if_reward(
         "num_violating_turns": len(violating),
         "continuation_only": any(bool(r.get("continuation_only")) for r in applicable),
         "reward_components": components,
+        "reward_breakdown": breakdown,
     }
 
 
