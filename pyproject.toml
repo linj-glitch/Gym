@@ -614,6 +614,31 @@ include = [
     "nemo_gym",
     "nemo_gym.*",
 ]
+# The SWE agent keeps its framework setups (nv-OpenHands clone + miniforge, OpenCode, SWE-bench harnesses, maven mirror)
+# and its per-instance results NEXT TO its module (gitignored, ~300k files). They are data trees, not packages, and they
+# churn while rollouts run: package discovery that walks into them races with a concurrent chain's rollouts and the
+# editable build dies with "package directory 'responses_api_agents/swe_agents/swe_openhands_setup/OpenHands/evaluation/
+# oh/<instance>' does not exist" (chain e2e-s35-v5 windows 1-2, 2026-09-26). Keep discovery out of them.
+exclude = [
+    "responses_api_agents.swe_agents.swe_openhands_setup",
+    "responses_api_agents.swe_agents.swe_openhands_setup.*",
+    "responses_api_agents.swe_agents.swe_opencode_setup",
+    "responses_api_agents.swe_agents.swe_opencode_setup.*",
+    "responses_api_agents.swe_agents.swe_swebench_setup",
+    "responses_api_agents.swe_agents.swe_swebench_setup.*",
+    "responses_api_agents.swe_agents.swe_rebench_setup",
+    "responses_api_agents.swe_agents.swe_rebench_setup.*",
+    "responses_api_agents.swe_agents.swe_r2e_gym_setup",
+    "responses_api_agents.swe_agents.swe_r2e_gym_setup.*",
+    "responses_api_agents.swe_agents.swe_swebench_multilingual_setup",
+    "responses_api_agents.swe_agents.swe_swebench_multilingual_setup.*",
+    "responses_api_agents.swe_agents.swe_bench_ext",
+    "responses_api_agents.swe_agents.swe_bench_ext.*",
+    "responses_api_agents.swe_agents.maven_mirror",
+    "responses_api_agents.swe_agents.maven_mirror.*",
+    "responses_api_agents.swe_agents.results",
+    "responses_api_agents.swe_agents.results.*",
+]
 
 ################################################
 # Testing
