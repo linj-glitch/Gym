@@ -1,0 +1,18 @@
+{% set language = instance.repo_language | default('') %}
+There is a bug report for the {{ language }} repository checked out at {{ workspace_path }}. The environment is already set up (all dependencies installed).
+
+<issue_details>
+{{ instance.problem_statement }}
+</issue_details>
+
+<workspace_path>
+{{ workspace_path }}
+</workspace_path>
+
+Fix the issue described in <issue_details>. Make the necessary changes to non-test files under {{ workspace_path }} so the requirements in the issue are satisfied.
+
+Requirements:
+- Explore the relevant code before changing it, and reproduce the issue first when feasible so you can verify your fix.
+- Run the unit tests relevant to your change to check for regressions. Do NOT modify any existing tests.
+- Before finishing, check `git status`: the final state of the repository must contain only the intentional fix — revert unrelated file modifications and delete any temporary scripts or debug files you created.
+- Do not commit, and do not use git checkout on tracked files.
