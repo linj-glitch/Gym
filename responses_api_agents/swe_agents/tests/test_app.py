@@ -3376,3 +3376,18 @@ def test_git_history_scrub_cmd_keeps_only_heads_branch():
     assert swe_app._git_history_scrub_cmd().startswith("{ for _d in /workspace/*")
     src = inspect.getsource(swe_app) if "inspect" in globals() else __import__("inspect").getsource(swe_app)
     assert src.count("self.config.scrub_git_history") == 2  # both harness paths (openhands, opencode)
+
+
+def test_real_path_setup_mounts_binds_the_real_tree_when_symlinked(tmp_path):
+    """Harness setup trees reached through a symlink (training Gym snapshots) must also be bound at their real
+    path: the uv venv's python symlink and pyvenv.cfg point there (e2e-s35-v7 smoke 19500898, 2026-09-29)."""
+    from responses_api_agents.swe_agents.app import real_path_setup_mounts
+
+    real = tmp_path / "shared" / "swe_swebench_setup"
+    real.mkdir(parents=True)
+    link = tmp_path / "snapshot" / "swe_swebench_setup"
+    link.parent.mkdir()
+    link.symlink_to(real)
+    assert real_path_setup_mounts(link) == [f"--mount type=bind,src={real.resolve()},dst={real.resolve()}"]
+    assert real_path_setup_mounts(link, ro=True) == [f"--mount type=bind,src={real.resolve()},dst={real.resolve()},ro"]
+    assert real_path_setup_mounts(real.resolve()) == []

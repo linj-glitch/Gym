@@ -84,6 +84,24 @@ from responses_api_models.vllm_model.app import VLLMConverter, split_responses_i
 ########################################
 
 
+
+def real_path_setup_mounts(setup_dir, ro: bool = False) -> list[str]:
+    """Extra apptainer binds so a harness setup tree reached THROUGH A SYMLINK also exists at its real path.
+
+    The uv venvs of the SWE-bench / SWE-bench_Multilingual / R2E-Gym setups record the interpreter by the
+    ABSOLUTE REAL path of the setup tree (venv/bin/python -> <real setup>/python/cpython-3.12.../bin/python3.12,
+    pyvenv.cfg home = the same). A training launch's Gym snapshot links swe_*_setup/ to a shared checkout, so
+    inside the eval sandbox the tree was visible only at the symlink path and every eval died with
+    "env: .../venv/bin/python: No such file or directory" (e2e-s35-v7 smoke 19500898, 2026-09-29: 0/24 patched
+    episodes graded). Mirrors the OpenHands real-path binds above. Returns [] when the path is not a symlink.
+    """
+    real = Path(os.path.realpath(str(setup_dir)))
+    if real == Path(str(setup_dir)):
+        return []
+    suffix = ",ro" if ro else ""
+    return [f"--mount type=bind,src={real},dst={real}{suffix}"]
+
+
 class AgentPromptOverride(BaseModel):
     user_prompt_template: Optional[str] = Field(
         default=None,
@@ -3559,6 +3577,7 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
             # This is needed because uv venv has hardcoded absolute paths
             mount_args.append(f"--mount type=bind,src={params.swebench_setup_dir},dst=/swebench_setup")
             mount_args.append(f"--mount type=bind,src={params.swebench_setup_dir},dst={params.swebench_setup_dir}")
+            mount_args.extend(real_path_setup_mounts(params.swebench_setup_dir))
 
         if command.mode == "eval" and "SWE-bench_Multilingual" in data_point["dataset_name"]:
             mount_args.append(
@@ -3567,6 +3586,7 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
             mount_args.append(
                 f"--mount type=bind,src={params.swebench_multilingual_setup_dir},dst={params.swebench_multilingual_setup_dir}"
             )
+            mount_args.extend(real_path_setup_mounts(params.swebench_multilingual_setup_dir))
 
         if command.mode == "eval" and data_point["dataset_name"] == "nv-internal-1":
             run_script_path = params.persistent_dir / "run_script.sh"
@@ -3585,6 +3605,7 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
             # print(f"Mounting R2E-Gym setup directory from: {self.r2e_gym_setup_dir}", flush=True)
             mount_args.append(f"--mount type=bind,src={params.r2e_gym_setup_dir},dst=/r2egym_setup")
             mount_args.append(f"--mount type=bind,src={params.r2e_gym_setup_dir},dst={params.r2e_gym_setup_dir}")
+            mount_args.extend(real_path_setup_mounts(params.r2e_gym_setup_dir))
 
         if command.mode == "eval" and "SWE-rebench" in data_point["dataset_name"]:
             rebench_setup_dir = params.swe_rebench_setup_dir
