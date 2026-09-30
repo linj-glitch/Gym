@@ -140,6 +140,15 @@ class SWEBenchWrapperConfig(BaseResponsesAPIAgentConfig):
         default=None, description="Path to JSON file containing tool definitions in OpenAI format (for SWE-agent)"
     )
     agent_max_turns: int = Field(default=100, description="Maximum iterations for the agent")
+    mask_policy_caused_limits: bool = Field(
+        default=True,
+        description=(
+            "Mask (exclude from the loss) episodes that hit the agent wall-clock cap, the eval timeout or the context "
+            "window, in addition to the infra failures (runtime died, OOM) that are always masked. False (Lin 2026-09-30, "
+            "e2e-s35-v7b): those limits are the policy's own doing under gracious caps, so the episode keeps task reward 0 "
+            "and GRPO sees the cost of runaway generation; only runtime_died / OOM stay masked."
+        ),
+    )
     agent_framework_repo: Optional[str] = Field(
         default=None,
         description="URL of the SWE-agent/OpenHands repo to pass to git clone. If None, will use the official repo",
@@ -341,6 +350,7 @@ class SWEBenchMetrics(BaseModel):
     # "stuck_in_loop" (OpenHands loop detector) or "context_exhausted" (model server returned empty replies).
     # `resolved` keeps the measured test verdict; the task reward is 0 for these (see _unfinished_exit_kind).
     unfinished_exit: Optional[str] = None
+    policy_caused_limit: Optional[bool] = None   # agent cap / eval timeout / context window hit (masked only if mask_policy_caused_limits)
     unfinished: Optional[bool] = None
     agent_timed_out: Optional[bool] = None
     eval_timed_out: Optional[bool] = None
@@ -4002,14 +4012,11 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
         unfinished_exit = _unfinished_exit_kind(agent_error_kind, persisted_metrics.per_turn_metrics)
         metrics_to_update["unfinished_exit"] = unfinished_exit
         metrics_to_update["unfinished"] = unfinished_exit is not None
-        if (
-            agent_error_kind in ("context_window", "runtime_died")
-            or eval_timed_out
-            or agent_timed_out
-            or oom_killed
-            or eval_oom_killed
-        ):
+        infra_failure = agent_error_kind == "runtime_died" or oom_killed or eval_oom_killed
+        policy_caused_limit = agent_error_kind == "context_window" or eval_timed_out or agent_timed_out
+        if infra_failure or (policy_caused_limit and self.config.mask_policy_caused_limits):
             params.mask_sample = True
+        metrics_to_update["policy_caused_limit"] = bool(policy_caused_limit)
 
         trajectories_dir = params.persistent_dir / "trajectories"
         chat_completions_trajectory, chat_completions_tools, prefix_msg_count = (
