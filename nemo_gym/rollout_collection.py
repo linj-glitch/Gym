@@ -1879,6 +1879,7 @@ Aggregate metrics: {aggregate_metrics_fpath}{coverage}""")
         head_server_config: Optional[BaseServerConfig] = None,
         semaphore: Optional[Semaphore] = None,
         route_failures_to_sidecar: bool = False,
+        dispatched_tasks: Optional[List["asyncio.Task"]] = None,
     ) -> Iterator[Future]:  # pragma: no cover
         """
         We provide this function as a lower level interface for running rollout collection.
@@ -1890,6 +1891,10 @@ Aggregate metrics: {aggregate_metrics_fpath}{coverage}""")
         ``route_failures_to_sidecar`` makes a failed `/run` a failure row instead of an exception
         that ends every rollout still in flight. It defaults off because those rollouts then leave
         the score.
+
+        ``dispatched_tasks``: when a list is passed, one asyncio task per row is created eagerly (in row order)
+        and appended to it, so the caller can cancel the tail of the batch (NeMo-RL's straggler cutoff). Must be
+        called inside a running event loop then. None keeps the default lazy dispatch.
         """
         server_client = self.setup_server_client(head_server_config)
         self.resolve_task_sources(examples, server_client.global_config_dict)
@@ -1925,6 +1930,16 @@ Aggregate metrics: {aggregate_metrics_fpath}{coverage}""")
                     status = getattr(e, "status", None) or getattr(res, "status", None)
                     return row, _agent_request_failure_row(e, status)
 
+        if dispatched_tasks is not None:
+            tasks = [asyncio.ensure_future(_post_subroutine(row)) for row in examples]
+            dispatched_tasks.extend(tasks)
+            return tqdm.as_completed(
+                tasks,
+                desc="Collecting rollouts",
+                miniters=10,
+                total=len(examples),
+                maxinterval=60,
+            )
         return tqdm.as_completed(
             map(_post_subroutine, examples),
             desc="Collecting rollouts",

@@ -750,6 +750,55 @@ class TestRolloutCollection:
         assert NG_PERF_KEY not in result
         assert "_ng_rollout_latency_ms" not in result
 
+    async def test_run_examples_dispatched_tasks_are_eager_and_cancellable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``dispatched_tasks`` hands the caller one Task per row; cancelling one aborts its in-flight /run."""
+        rows = [
+            {AGENT_REF_KEY_NAME: {"name": "my_agent"}, TASK_INDEX_KEY_NAME: i, ROLLOUT_INDEX_KEY_NAME: 0}
+            for i in range(2)
+        ]
+        cancelled: list[int] = []
+
+        async def post(server_name, url_path, json):
+            if json[TASK_INDEX_KEY_NAME] == 1:
+                try:
+                    await asyncio.sleep(30)
+                except asyncio.CancelledError:
+                    cancelled.append(1)
+                    raise
+            response = MagicMock()
+            response.status = 200
+            return response
+
+        mock_server_client = MagicMock()
+        mock_server_client.post = post
+        mock_server_client.global_config_dict = OmegaConf.create({"my_agent": {"responses_api_agents": {"impl": {}}}})
+        monkeypatch.setattr(
+            nemo_gym.rollout_collection, "setup_server_client_utils", lambda *args, **kwargs: mock_server_client
+        )
+
+        async def ok_raise_for_status(_response):
+            return None
+
+        async def fake_json(_response):
+            return {"reward": 1.0}
+
+        monkeypatch.setattr(nemo_gym.rollout_collection, "raise_for_status", ok_raise_for_status)
+        monkeypatch.setattr(nemo_gym.rollout_collection, "get_response_json", fake_json)
+
+        tasks: list = []
+        iterator = RolloutCollectionHelper().run_examples(rows, dispatched_tasks=tasks)
+        assert len(tasks) == 2 and all(isinstance(t, asyncio.Future) for t in tasks)
+
+        done, pending = await asyncio.wait(tasks, timeout=1.0, return_when=asyncio.FIRST_COMPLETED)
+        assert done == {tasks[0]} and pending == {tasks[1]}
+        row, result = tasks[0].result()
+        assert row is rows[0] and result["reward"] == 1.0
+
+        tasks[1].cancel()
+        await asyncio.gather(tasks[1], return_exceptions=True)
+        assert cancelled == [1] and tasks[1].cancelled()
+        assert iterator is not None
+
     async def test_run_examples_logs_failed_run(
         self,
         monkeypatch: pytest.MonkeyPatch,
