@@ -2441,7 +2441,9 @@ class OpenCodeHarnessProcessor(BaseDatasetHarnessProcessor):
 ########################################
 
 
-def _unfinished_exit_kind(agent_error_kind: Optional[str], per_turn_metrics: Optional[dict]) -> Optional[str]:
+def _unfinished_exit_kind(
+    agent_error_kind: Optional[str], per_turn_metrics: Optional[dict], max_output_tokens: Optional[int] = None
+) -> Optional[str]:
     """Why the episode ended without the agent finishing, or None.
 
     Three exits share one property: the agent never decided it was done, so a patch left on disk is an accident of
@@ -2451,6 +2453,10 @@ def _unfinished_exit_kind(agent_error_kind: Optional[str], per_turn_metrics: Opt
       stuck_in_loop      OpenHands' StuckDetector killed the episode (4 identical action/observation pairs, ...)
       context_exhausted  the model server answered with empty replies (prompt no longer fits the context window):
                          OpenHands records them as zero-usage calls after real ones and then finishes the episode
+      turn_cap           the last model call ran into max_output_tokens (Lin 2026-10-09, swe-e2e-v3): a reasoning turn that
+                         degenerates into babble fills the per-turn cap, the reply carries no action and OpenHands finishes.
+                         swe-e2e-v2 graded those like clean finishes and 25% of them still scored (fix landed earlier), which
+                         reinforced the babble (training_reports/2026-10-07_swe_e2e_v2_collapse_deep_dive.md).
     """
     if agent_error_kind in ("max_iteration", "stuck_in_loop"):
         return agent_error_kind
@@ -2463,6 +2469,8 @@ def _unfinished_exit_kind(agent_error_kind: Optional[str], per_turn_metrics: Opt
         last = calls[-1]
         if real and (last.get("prompt_tokens") or 0) == 0 and (last.get("completion_tokens") or 0) == 0:
             return "context_exhausted"
+    if max_output_tokens and calls and (calls[-1].get("completion_tokens") or 0) >= int(max_output_tokens):
+        return "turn_cap"
     return None
 
 
@@ -4009,7 +4017,9 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
         agent_timed_out = bool(persisted_metrics.agent_timed_out)
         oom_killed = bool(persisted_metrics.oom_killed)
         eval_oom_killed = bool(persisted_metrics.eval_oom_killed)
-        unfinished_exit = _unfinished_exit_kind(agent_error_kind, persisted_metrics.per_turn_metrics)
+        unfinished_exit = _unfinished_exit_kind(
+            agent_error_kind, persisted_metrics.per_turn_metrics, max_output_tokens=getattr(params.body, "max_output_tokens", None)
+        )
         metrics_to_update["unfinished_exit"] = unfinished_exit
         metrics_to_update["unfinished"] = unfinished_exit is not None
         infra_failure = agent_error_kind == "runtime_died" or oom_killed or eval_oom_killed

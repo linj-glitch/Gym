@@ -3320,7 +3320,7 @@ def test_classify_agent_error_runtime_death_is_masked_kind():
 
 
 def test_unfinished_exit_kind_covers_the_three_cut_offs():
-    """Turn cap, loop detector and context exhaustion are 'unfinished' exits (Lin 2026-09-23); a normal finish is not."""
+    """Turn cap, loop detector, context exhaustion (Lin 2026-09-23) and a per-turn-cap exit (2026-10-09) are 'unfinished'; a normal finish is not."""
     f = swe_app._unfinished_exit_kind
     assert f("max_iteration", None) == "max_iteration"
     assert f("stuck_in_loop", None) == "stuck_in_loop"
@@ -3333,6 +3333,14 @@ def test_unfinished_exit_kind_covers_the_three_cut_offs():
     assert f(None, {"token_usages": [{"prompt_tokens": 0, "completion_tokens": 0}]}) is None  # never had a real call
     assert f("other", {"token_usages": usages[:2]}) is None
     assert f(None, None) is None
+    # per-turn cap (swe-e2e-v3): the last call filled max_output_tokens -> turn_cap; only when the cap is known
+    capped = [{"prompt_tokens": 6000, "completion_tokens": 300}, {"prompt_tokens": 9000, "completion_tokens": 16384}]
+    assert f(None, {"token_usages": capped}, max_output_tokens=16384) == "turn_cap"
+    assert f(None, {"token_usages": capped}, max_output_tokens=None) is None
+    assert f(None, {"token_usages": capped[:1]}, max_output_tokens=16384) is None   # an earlier capped turn that continued is not an exit
+    assert f(None, {"token_usages": list(reversed(capped))}, max_output_tokens=16384) is None
+    assert f("max_iteration", {"token_usages": capped}, max_output_tokens=16384) == "max_iteration"  # harness exits win
+    assert f(None, {"token_usages": capped + usages[2:]}, max_output_tokens=16384) == "context_exhausted"
 
 
 @pytest.mark.asyncio
