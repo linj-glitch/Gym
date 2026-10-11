@@ -3313,7 +3313,8 @@ def test_classify_agent_error_runtime_death_is_masked_kind():
     # host-side OSError / ClientResponseError (node /tmp full, 2026-10-11) is infra -> host_error, masked
     assert swe_app._classify_agent_error("RuntimeError: There was an unexpected error while running the agent: OSError. You can refresh the page") == "host_error"
     assert swe_app._classify_agent_error("RuntimeError: There was an unexpected error while running the agent: ClientResponseError. x") == "host_error"
-    assert swe_app._classify_agent_error("RuntimeError: There was an unexpected error while running the agent: ValueError. x") == "other"
+    assert swe_app._classify_agent_error("RuntimeError: There was an unexpected error while running the agent: JSONDecodeError. x") == "host_error"
+    assert swe_app._classify_agent_error("RuntimeError: There was an unexpected error while running the agent: ValueError. x") == "host_error"  # any harness crash
     assert swe_app._classify_agent_error(None) is None
     # the mask decision in _inner_responses (2026-09-30, mask_policy_caused_limits): runtime death is an infra failure and
     # always masked; context_window is a policy-caused limit (masked only when the knob is on); max_iteration is graded.

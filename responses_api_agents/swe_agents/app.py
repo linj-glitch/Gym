@@ -2516,10 +2516,11 @@ def _classify_agent_error(err: Optional[str]) -> Optional[str]:
         # failure, not a policy outcome. Masked from the gradient like OOM / timeouts (e2e-s35 smoke 19085735,
         # 2026-09-21: 5 of 256 rollouts in one step, 0 in the other steps).
         return "runtime_died"
-    if "unexpected error while running the agent: OSError" in s or "unexpected error while running the agent: ClientResponseError" in s:
-        # OpenHands' controller caught an OSError / aiohttp ClientResponseError on the HOST side (2026-10-11: node-local /tmp full
-        # on batch nodes -> 20-40% of rollouts in swe-e2e-v3b/v3c/qwen4b died this way after ~18 turns). Infrastructure, not a
-        # policy outcome: masked like runtime_died instead of scoring 0.
+    if "unexpected error while running the agent" in s:
+        # OpenHands' controller died on an unhandled exception (2026-10-11: JSONDecodeError from a race on the shared
+        # nemo_gym_metrics.json in nemo_gym_client._update_model_call_time, 20-45% of rollouts in swe-e2e-v3b/v3c/qwen4b and
+        # the v3c-from-SFT smokes; earlier OSError/ClientResponseError variants). A harness crash is never a policy outcome:
+        # masked like runtime_died instead of scoring 0. The race itself is fixed in the OpenHands fork (locked atomic update).
         return "host_error"
     return "other"
 
