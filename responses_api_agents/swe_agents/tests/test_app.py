@@ -3310,13 +3310,17 @@ def test_classify_agent_error_runtime_death_is_masked_kind():
     assert swe_app._classify_agent_error("RetryError[... RuntimeError('Server process died')]") == "runtime_died"
     assert swe_app._classify_agent_error("Agent reached maximum iteration") == "max_iteration"
     assert swe_app._classify_agent_error("something else") == "other"
+    # host-side OSError / ClientResponseError (node /tmp full, 2026-10-11) is infra -> host_error, masked
+    assert swe_app._classify_agent_error("RuntimeError: There was an unexpected error while running the agent: OSError. You can refresh the page") == "host_error"
+    assert swe_app._classify_agent_error("RuntimeError: There was an unexpected error while running the agent: ClientResponseError. x") == "host_error"
+    assert swe_app._classify_agent_error("RuntimeError: There was an unexpected error while running the agent: ValueError. x") == "other"
     assert swe_app._classify_agent_error(None) is None
     # the mask decision in _inner_responses (2026-09-30, mask_policy_caused_limits): runtime death is an infra failure and
     # always masked; context_window is a policy-caused limit (masked only when the knob is on); max_iteration is graded.
     import inspect
 
     src = inspect.getsource(swe_app)
-    assert 'infra_failure = agent_error_kind == "runtime_died"' in src
+    assert 'infra_failure = agent_error_kind in ("runtime_died", "host_error")' in src
     assert 'policy_caused_limit = agent_error_kind == "context_window"' in src
     assert '"max_iteration", "context_window", "runtime_died"' not in src
 

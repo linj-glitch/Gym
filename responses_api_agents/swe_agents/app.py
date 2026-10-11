@@ -2516,6 +2516,11 @@ def _classify_agent_error(err: Optional[str]) -> Optional[str]:
         # failure, not a policy outcome. Masked from the gradient like OOM / timeouts (e2e-s35 smoke 19085735,
         # 2026-09-21: 5 of 256 rollouts in one step, 0 in the other steps).
         return "runtime_died"
+    if "unexpected error while running the agent: OSError" in s or "unexpected error while running the agent: ClientResponseError" in s:
+        # OpenHands' controller caught an OSError / aiohttp ClientResponseError on the HOST side (2026-10-11: node-local /tmp full
+        # on batch nodes -> 20-40% of rollouts in swe-e2e-v3b/v3c/qwen4b died this way after ~18 turns). Infrastructure, not a
+        # policy outcome: masked like runtime_died instead of scoring 0.
+        return "host_error"
     return "other"
 
 
@@ -4022,7 +4027,7 @@ class SWEBenchWrapper(SimpleResponsesAPIAgent):
         )
         metrics_to_update["unfinished_exit"] = unfinished_exit
         metrics_to_update["unfinished"] = unfinished_exit is not None
-        infra_failure = agent_error_kind == "runtime_died" or oom_killed or eval_oom_killed
+        infra_failure = agent_error_kind in ("runtime_died", "host_error") or oom_killed or eval_oom_killed
         policy_caused_limit = agent_error_kind == "context_window" or eval_timed_out or agent_timed_out
         if infra_failure or (policy_caused_limit and self.config.mask_policy_caused_limits):
             params.mask_sample = True
