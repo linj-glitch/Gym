@@ -21,6 +21,7 @@ from pytest import MonkeyPatch
 
 from nemo_gym.sandbox import SandboxExecResult, SandboxHandle
 from nemo_gym.server_utils import ServerClient
+from resources_servers.swebench.app import patch_extraction_command, strip_binary_diffs
 from resources_servers.swebench.app import (
     DockerContainer,
     SwebenchResourcesServer,
@@ -229,3 +230,24 @@ class TestApp:
 
         assert observation.outcome == "sandbox_error"
         assert observation.error_type == "RuntimeError"
+
+
+class TestPatchExtraction:
+    def test_command_diffs_the_index_against_the_seed_commit_after_staging_everything(self) -> None:
+        cmd = patch_extraction_command("/testbed", "abc123")
+        assert cmd.startswith("cd /testbed && git add -A -- . ")
+        assert "':(exclude).claude'" in cmd and "':(exclude)*.pyc'" in cmd
+        assert cmd.endswith("cd /testbed && git --no-pager diff --cached abc123")
+
+    def test_command_quotes_odd_paths(self) -> None:
+        assert "'/work dir'" in patch_extraction_command("/work dir", "deadbeef")
+
+    def test_strip_binary_diffs_drops_only_binary_sections(self) -> None:
+        text = (
+            "diff --git a/a.py b/a.py\nindex 1..2 100644\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x\n+y\n"
+            "diff --git a/img.png b/img.png\nindex 3..4 100644\nBinary files a/img.png and b/img.png differ\n"
+            "diff --git a/b.py b/b.py\nnew file mode 100644\n--- /dev/null\n+++ b/b.py\n@@ -0,0 +1 @@\n+z\n"
+        )
+        out = strip_binary_diffs(text)
+        assert "img.png" not in out and "a/a.py" in out and "b/b.py" in out
+        assert strip_binary_diffs("") == ""
