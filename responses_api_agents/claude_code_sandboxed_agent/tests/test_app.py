@@ -207,3 +207,10 @@ class TestFullToolSetAndUltracode:
 
     def test_subagent_summary_of_an_empty_stream(self) -> None:
         assert subagent_summary("no json here") == {"tool_use_counts": {}, "subagent_events": 0, "subagent_stats": None}
+
+    def test_append_system_prompt_is_quoted_and_precedes_the_query(self) -> None:
+        text = "Delegate: run several Task agents in parallel; it's faster"
+        argv = _claude_invocation(_agent(claude_append_system_prompt=text)._build_command("q"))
+        assert argv[argv.index("--append-system-prompt") + 1] == text
+        assert argv[-1] == "q"
+        assert "--append-system-prompt" not in _claude_invocation(_agent()._build_command("q"))

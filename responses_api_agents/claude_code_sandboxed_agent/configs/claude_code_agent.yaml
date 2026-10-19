@@ -44,6 +44,9 @@ claude_code_sandboxed_agent:
       # CLAUDE_CODE_MAX_CONTEXT_TOKENS: the served context window, so the CLI's
       # auto-compaction fires relative to it for a model id it does not know.
       claude_max_context_tokens: null
+      # Appended to the CLI's system prompt (--append-system-prompt); the task
+      # prompt stays untouched. null adds nothing.
+      claude_append_system_prompt: null
       # Extra CLI arguments, appended verbatim before the query.
       claude_extra_args: []
       # Forwarded per rollout via ANTHROPIC_CUSTOM_HEADERS so router session

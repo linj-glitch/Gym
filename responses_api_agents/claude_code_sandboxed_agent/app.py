@@ -120,6 +120,10 @@ class ClaudeCodeSandboxedAgentConfig(BaseResponsesAPIAgentConfig):
     # its auto-compaction fires relative to the real one. None keeps the CLI
     # default.
     claude_max_context_tokens: Optional[int] = None
+    # Text appended to Claude Code's system prompt (``--append-system-prompt``),
+    # e.g. an instruction to delegate to parallel subagents; the task prompt
+    # itself stays untouched. None adds nothing.
+    claude_append_system_prompt: Optional[str] = None
     # Extra CLI arguments, appended verbatim before the query.
     claude_extra_args: List[str] = []
     # Header carrying Gym's rollout session id to the proxy. None disables.
@@ -279,6 +283,8 @@ class ClaudeCodeSandboxedAgent(SimpleResponsesAPIAgent):
         claude_args += f" --model {quote(self.config.claude_model)}"
         if self.config.claude_max_turns is not None:
             claude_args += f" --max-turns {self.config.claude_max_turns}"
+        if self.config.claude_append_system_prompt:
+            claude_args += f" --append-system-prompt {quote(self.config.claude_append_system_prompt)}"
         for arg in self.config.claude_extra_args:
             claude_args += f" {quote(arg)}"
 
