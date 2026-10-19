@@ -233,10 +233,10 @@ class TestApp:
 
 
 class TestPatchExtraction:
-    def test_command_diffs_the_index_against_the_seed_commit_after_staging_everything(self) -> None:
+    def test_command_stages_tracked_changes_and_diffs_the_index_against_the_seed_commit(self) -> None:
         cmd = patch_extraction_command("/testbed", "abc123")
-        assert cmd.startswith("cd /testbed && git add -A -- . ")
-        assert "':(exclude).claude'" in cmd and "':(exclude)*.pyc'" in cmd
+        assert cmd.startswith("cd /testbed && git add -u ")
+        assert "add -A" not in cmd  # untracked build output must not ride along
         assert cmd.endswith("cd /testbed && git --no-pager diff --cached abc123")
 
     def test_command_quotes_odd_paths(self) -> None:

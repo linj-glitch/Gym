@@ -236,15 +236,14 @@ class SWEBenchSeedSessionResponse(BaseSeedSessionResponse):
 # staged (`git add`) or committed scored 0 with an empty patch: 14% of Claude
 # Code rollouts on SWE-bench Verified did one of the two (2026-10-19). Diff the
 # index against the commit the session was seeded at instead, after staging
-# everything, so staged, committed and new files all count; drop binary files,
-# which `git apply` cannot take without binary data.
-PATCH_EXCLUDES = (".claude", "**/__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache")
-
-
+# the tracked files' changes, so staged and committed fixes count. Untracked
+# files are left out on purpose: `git add -A` swept a generated Sphinx `_build`
+# tree (1.1 MB of jquery) into one patch; a new file the agent committed is
+# still included. Binary sections are dropped, since `git apply` cannot take
+# them without binary data.
 def patch_extraction_command(workdir: str, seed_head: str) -> str:
-    excludes = " ".join(quote(f":(exclude){e}") for e in PATCH_EXCLUDES)
     return (
-        f"cd {quote(workdir)} && git add -A -- . {excludes} >/dev/null 2>&1; "
+        f"cd {quote(workdir)} && git add -u >/dev/null 2>&1; "
         f"cd {quote(workdir)} && git --no-pager diff --cached {quote(seed_head)}"
     )
 
