@@ -44,6 +44,9 @@ claude_code_sandboxed_agent:
       # CLAUDE_CODE_MAX_CONTEXT_TOKENS: the served context window, so the CLI's
       # auto-compaction fires relative to it for a model id it does not know.
       claude_max_context_tokens: null
+      # MAX_THINKING_TOKENS: cap thinking per reply so it cannot consume the
+      # whole reply budget at high effort. null keeps the CLI default.
+      claude_max_thinking_tokens: null
       # Appended to the CLI's system prompt (--append-system-prompt); the task
       # prompt stays untouched. null adds nothing.
       claude_append_system_prompt: null

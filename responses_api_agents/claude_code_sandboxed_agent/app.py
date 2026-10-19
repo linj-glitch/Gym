@@ -120,6 +120,12 @@ class ClaudeCodeSandboxedAgentConfig(BaseResponsesAPIAgentConfig):
     # its auto-compaction fires relative to the real one. None keeps the CLI
     # default.
     claude_max_context_tokens: Optional[int] = None
+    # MAX_THINKING_TOKENS: cap on thinking per reply. The reply cap
+    # (claude_max_output_tokens) includes thinking, and at high effort a
+    # small model can spend the whole reply thinking and end the turn with
+    # no text and no tool call (two thirds of ultracode rollouts on
+    # Nemotron 3 Nano had such a turn). None keeps the CLI default.
+    claude_max_thinking_tokens: Optional[int] = None
     # Text appended to Claude Code's system prompt (``--append-system-prompt``),
     # e.g. an instruction to delegate to parallel subagents; the task prompt
     # itself stays untouched. None adds nothing.
@@ -326,6 +332,8 @@ class ClaudeCodeSandboxedAgent(SimpleResponsesAPIAgent):
             env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(self.config.claude_max_output_tokens)
         if self.config.claude_max_context_tokens is not None:
             env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(self.config.claude_max_context_tokens)
+        if self.config.claude_max_thinking_tokens is not None:
+            env["MAX_THINKING_TOKENS"] = str(self.config.claude_max_thinking_tokens)
         if self.config.ultracode:
             # The Workflow tool is gated by this variable; without it the CLI
             # refuses --effort ultracode.

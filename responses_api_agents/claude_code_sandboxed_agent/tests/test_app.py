@@ -214,3 +214,7 @@ class TestFullToolSetAndUltracode:
         assert argv[argv.index("--append-system-prompt") + 1] == text
         assert argv[-1] == "q"
         assert "--append-system-prompt" not in _claude_invocation(_agent()._build_command("q"))
+
+    def test_thinking_cap_env(self) -> None:
+        assert _agent(claude_max_thinking_tokens=4096)._build_env("s")["MAX_THINKING_TOKENS"] == "4096"
+        assert "MAX_THINKING_TOKENS" not in _agent()._build_env("s")
