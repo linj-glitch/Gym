@@ -12,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import re
 import shlex
 from typing import Any, Optional
@@ -25,6 +26,7 @@ from nemo_gym.server_utils import ServerClient
 from responses_api_agents.claude_code_sandboxed_agent.app import (
     ClaudeCodeSandboxedAgent,
     ClaudeCodeSandboxedAgentConfig,
+    subagent_summary,
 )
 
 
@@ -140,3 +142,68 @@ class TestConfig:
 
         assert both.remote_claude_binary_path == "/opt/claude"
         assert neither is None
+
+
+class TestFullToolSetAndUltracode:
+    def test_full_tool_set_keeps_the_guards_and_withholds_web_tools(self) -> None:
+        argv = _claude_invocation(_agent(bare=False)._build_command("q"))
+        assert "--bare" not in argv
+        assert argv[argv.index("--setting-sources") + 1] == "user"
+        assert "--strict-mcp-config" in argv
+        assert argv[argv.index("--disallowed-tools") + 1] == "WebSearch,WebFetch"
+        assert "--effort" not in argv
+
+    def test_bare_run_has_no_full_set_flags(self) -> None:
+        argv = _claude_invocation(_agent(bare=True)._build_command("q"))
+        assert "--bare" in argv
+        for flag in ("--setting-sources", "--strict-mcp-config", "--disallowed-tools", "--effort"):
+            assert flag not in argv
+
+    def test_ultracode_adds_effort_flag_and_workflow_env(self) -> None:
+        agent = _agent(bare=False, ultracode=True, workflow_max_concurrent_agents=4, claude_max_context_tokens=131072)
+        argv = _claude_invocation(agent._build_command("q"))
+        assert argv[argv.index("--effort") + 1] == "ultracode"
+        env = agent._build_env("sess")
+        assert env["CLAUDE_CODE_WORKFLOWS"] == "true"
+        assert env["CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS"] == "4"
+        assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "131072"
+
+    def test_plain_run_sets_none_of_the_ultracode_env(self) -> None:
+        env = _agent()._build_env("sess")
+        for key in ("CLAUDE_CODE_WORKFLOWS", "CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"):
+            assert key not in env
+
+    def test_ultracode_refuses_bare(self) -> None:
+        with raises(ValidationError, match="bare=false"):
+            _config(bare=True, ultracode=True)
+
+    def test_disallowed_tools_can_be_emptied_and_extra_args_are_quoted(self) -> None:
+        argv = _claude_invocation(_agent(bare=False, disallowed_tools=[], claude_extra_args=["--max-budget-usd", "1 2"])._build_command("q"))
+        assert "--disallowed-tools" not in argv
+        assert argv[argv.index("--max-budget-usd") + 1] == "1 2"
+        assert argv[-1] == "q"
+
+    def test_subagent_summary_counts_delegation(self) -> None:
+        lines = [
+            "Installed Claude Code: 2.1.283",
+            json.dumps({"type": "system", "subtype": "init", "tools": ["Task", "Workflow", "Bash"]}),
+            json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "t1", "name": "Workflow", "input": {"script": "x"}},
+                {"type": "tool_use", "id": "t2", "name": "Task", "input": {"prompt": "explore"}},
+            ]}}),
+            json.dumps({"type": "assistant", "parent_tool_use_id": "t2", "message": {"content": [
+                {"type": "tool_use", "id": "t3", "name": "Bash", "input": {"command": "ls"}},
+            ]}}),
+            json.dumps({"type": "user", "parent_tool_use_id": "t2", "message": {"content": []}}),
+            json.dumps({"type": "result", "subtype": "success", "subagent_stats": {"spawned": 1, "completed": 1}}),
+            "Claude Code run finished rc=0",
+        ]
+        summary = subagent_summary("\n".join(lines))
+        assert summary == {
+            "tool_use_counts": {"Workflow": 1, "Task": 1, "Bash": 1},
+            "subagent_events": 2,
+            "subagent_stats": {"spawned": 1, "completed": 1},
+        }
+
+    def test_subagent_summary_of_an_empty_stream(self) -> None:
+        assert subagent_summary("no json here") == {"tool_use_counts": {}, "subagent_events": 0, "subagent_stats": None}

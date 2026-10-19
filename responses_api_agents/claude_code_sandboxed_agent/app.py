@@ -35,11 +35,12 @@ session affinity (e.g. Switchyard's escalation latch) and proxy-side
 attribution work per rollout.
 """
 
+import json
 import sys
 from shlex import quote
 from time import time
 from traceback import format_exc
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import Request
@@ -102,6 +103,25 @@ class ClaudeCodeSandboxedAgentConfig(BaseResponsesAPIAgentConfig):
     # CLAUDE.md) for an isolated, reproducible runtime — mirrors
     # claude_code_agent's `bare` option.
     bare: bool = True
+    # Tools withheld from the full set (``--disallowed-tools``) when ``bare``
+    # is false. WebSearch is Anthropic's server-side tool and returns nothing
+    # through a proxy; WebFetch is withheld so a benchmark rollout cannot read
+    # the upstream fix online.
+    disallowed_tools: List[str] = ["WebSearch", "WebFetch"]
+    # Claude Code's ultracode mode: ``--effort ultracode`` (xhigh effort plus a
+    # standing instruction to use the Workflow tool, which runs subagents in
+    # parallel) with CLAUDE_CODE_WORKFLOWS=true, the variable that gates the
+    # Workflow tool. Needs the full tool set, so ``bare`` must be false.
+    ultracode: bool = False
+    # CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS; None keeps the CLI default.
+    workflow_max_concurrent_agents: Optional[int] = None
+    # CLAUDE_CODE_MAX_CONTEXT_TOKENS. The CLI does not know the window of a
+    # model id it does not recognise (a route id); set the served window so
+    # its auto-compaction fires relative to the real one. None keeps the CLI
+    # default.
+    claude_max_context_tokens: Optional[int] = None
+    # Extra CLI arguments, appended verbatim before the query.
+    claude_extra_args: List[str] = []
     # Header carrying Gym's rollout session id to the proxy. None disables.
     session_header_name: Optional[str] = "x-switchyard-session-id"
 
@@ -119,6 +139,14 @@ class ClaudeCodeSandboxedAgentConfig(BaseResponsesAPIAgentConfig):
             raise ValueError(
                 "remote_claude_install_script_path and remote_claude_binary_path must be set together "
                 f"(got script={script!r}, binary={binary!r})"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _ultracode_needs_the_full_tool_set(self) -> "ClaudeCodeSandboxedAgentConfig":
+        if self.ultracode and self.bare:
+            raise ValueError(
+                "ultracode=true needs the Workflow and Agent tools, which --bare removes; set bare=false as well"
             )
         return self
 
@@ -141,6 +169,50 @@ class ClaudeCodeSandboxedAgentVerifyResponse(BaseVerifyResponse):
     claude_error_type: Optional[str] = None
     claude_num_turns: Optional[int] = None
     claude_is_error: Optional[bool] = None
+    # Tool-use counts by tool name across the main thread and any subagent
+    # events in the stream, plus the result event's ``subagent_stats``; see
+    # ``subagent_summary``. Both are None when the CLI produced no stream.
+    claude_tool_use_counts: Optional[Dict[str, int]] = None
+    claude_subagent_stats: Optional[Dict[str, Any]] = None
+
+
+def subagent_summary(stdout: str) -> Dict[str, Any]:
+    """How much of a stream-json run was delegated.
+
+    Returns ``tool_use_counts`` (tool name -> calls, main thread and subagent
+    events alike), ``subagent_events`` (stream objects carrying a
+    ``parent_tool_use_id``, i.e. produced inside an Agent-tool subagent) and
+    ``subagent_stats`` (the result event's own counter, which covers the Agent
+    tool only: Workflow-script agents do not appear in the parent's stream, so
+    their work shows up here only as ``Workflow`` calls).
+    """
+    tool_use_counts: Dict[str, int] = {}
+    subagent_events = 0
+    subagent_stats: Optional[Dict[str, Any]] = None
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("parent_tool_use_id"):
+            subagent_events += 1
+        if event.get("type") == "assistant":
+            for block in (event.get("message") or {}).get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    name = str(block.get("name"))
+                    tool_use_counts[name] = tool_use_counts.get(name, 0) + 1
+        elif event.get("type") == "result" and isinstance(event.get("subagent_stats"), dict):
+            subagent_stats = event["subagent_stats"]
+    return {
+        "tool_use_counts": tool_use_counts,
+        "subagent_events": subagent_events,
+        "subagent_stats": subagent_stats,
+    }
 
 
 class ClaudeCodeSandboxedAgent(SimpleResponsesAPIAgent):
@@ -191,10 +263,24 @@ class ClaudeCodeSandboxedAgent(SimpleResponsesAPIAgent):
 
         claude_args = "-p --output-format stream-json --verbose --dangerously-skip-permissions"
         if self.config.bare:
+            # --bare sets CLAUDE_CODE_SIMPLE=1: three tools (Bash, Edit, Read),
+            # no Agent, Workflow, Write, Grep or Glob.
             claude_args += " --bare"
+        else:
+            # The full tool set, keeping the two guards --bare provided:
+            # settings from the user scope only (the sandbox has none), so a
+            # repository's own .claude/settings.json cannot add hooks, and no
+            # MCP servers from a repository's .mcp.json.
+            claude_args += " --setting-sources user --strict-mcp-config"
+            if self.config.disallowed_tools:
+                claude_args += f" --disallowed-tools {quote(','.join(self.config.disallowed_tools))}"
+        if self.config.ultracode:
+            claude_args += " --effort ultracode"
         claude_args += f" --model {quote(self.config.claude_model)}"
         if self.config.claude_max_turns is not None:
             claude_args += f" --max-turns {self.config.claude_max_turns}"
+        for arg in self.config.claude_extra_args:
+            claude_args += f" {quote(arg)}"
 
         # stream-json events go to stdout; parse_stream_json skips the non-JSON
         # install/echo lines around them.
@@ -232,6 +318,14 @@ class ClaudeCodeSandboxedAgent(SimpleResponsesAPIAgent):
         }
         if self.config.claude_max_output_tokens is not None:
             env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(self.config.claude_max_output_tokens)
+        if self.config.claude_max_context_tokens is not None:
+            env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(self.config.claude_max_context_tokens)
+        if self.config.ultracode:
+            # The Workflow tool is gated by this variable; without it the CLI
+            # refuses --effort ultracode.
+            env["CLAUDE_CODE_WORKFLOWS"] = "true"
+        if self.config.workflow_max_concurrent_agents is not None:
+            env["CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS"] = str(self.config.workflow_max_concurrent_agents)
         if self.config.session_header_name:
             env["ANTHROPIC_CUSTOM_HEADERS"] = f"{self.config.session_header_name}: {session_id}"
         return env
@@ -275,8 +369,10 @@ class ClaudeCodeSandboxedAgent(SimpleResponsesAPIAgent):
         # plus usage/turn metadata, identical to the host-run agent.
         output = []
         metadata: Dict[str, Any] = {}
+        delegation: Dict[str, Any] = {}
         if result and result.stdout:
             output, metadata = parse_stream_json(result.stdout)
+            delegation = subagent_summary(result.stdout)
         status, error_type = _invocation_outcome(metadata, result.return_code if result else None)
 
         usage = None
@@ -299,6 +395,8 @@ class ClaudeCodeSandboxedAgent(SimpleResponsesAPIAgent):
             "claude_error_type": error_type,
             "claude_num_turns": metadata.get("num_turns"),
             "claude_is_error": metadata.get("is_error"),
+            "claude_tool_use_counts": delegation.get("tool_use_counts"),
+            "claude_subagent_stats": delegation.get("subagent_stats"),
         }
 
         return NeMoGymResponse(

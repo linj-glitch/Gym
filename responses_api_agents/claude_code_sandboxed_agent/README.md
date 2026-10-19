@@ -43,13 +43,23 @@ expected to put `claude` on `PATH`, e.g. by symlinking into `/usr/local/bin`.
 | `anthropic_auth_token` | Bearer the CLI sends; a placeholder for a local proxy. Never a real provider key. |
 | `claude_model` | Model the CLI requests — a Switchyard route id. Defaults to `${policy_model_name}`. |
 | `claude_max_turns`, `claude_max_output_tokens` | Optional caps (`--max-turns`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`). |
-| `bare` | `--bare`: skip hooks, plugins, MCP, memory and `CLAUDE.md` discovery. |
+| `bare` | `--bare`: skip hooks, plugins, MCP, memory and `CLAUDE.md` discovery. It also leaves the CLI three tools (Bash, Edit, Read). With `bare: false` the CLI gets its full tool set (Agent, Workflow, Write, Grep, Glob, ...) under `--setting-sources user --strict-mcp-config`, so a repository's own `.claude/settings.json` or `.mcp.json` cannot add hooks or servers. |
+| `disallowed_tools` | Withheld from the full tool set (`--disallowed-tools`); default `[WebSearch, WebFetch]`. WebSearch is Anthropic's server-side tool and returns nothing through a proxy; WebFetch would let a benchmark rollout read the upstream fix online. |
+| `ultracode` | Claude Code's ultracode mode: `--effort ultracode` (xhigh effort plus a standing instruction to use the Workflow tool, which runs subagents in parallel) with `CLAUDE_CODE_WORKFLOWS=true`. Needs `bare: false`. Subagents call the same endpoint; Claude Code marks their requests with an `x-claude-code-agent-id` header, which a Switchyard route's `subagents` policy can send to another target. |
+| `workflow_max_concurrent_agents` | `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS`; `null` keeps the CLI default. Each concurrent agent is one more stream against the endpoint, so size `num_samples_in_parallel` with it. |
+| `claude_max_context_tokens` | `CLAUDE_CODE_MAX_CONTEXT_TOKENS`: the served context window, so auto-compaction fires relative to it for a model id the CLI does not know. |
+| `claude_extra_args` | Extra CLI arguments, appended verbatim before the query. |
 | `session_header_name` | Header carrying the rollout session id; `null` disables. |
 | `sandbox_provider`, `sandbox_config`, `sandbox_timeout` | Same contract as `opencode_sandboxed_agent`. |
 
 The run verdict is carried on the verify response as `claude_status`
 (`completed`, `error`, `timeout`, ...) with `claude_num_turns`,
-`claude_is_error` and the raw CLI stdout/stderr.
+`claude_is_error` and the raw CLI stdout/stderr, plus two delegation
+counters: `claude_tool_use_counts` (calls per tool name, main thread and
+Agent-tool subagents alike, so `Task`/`Agent` and `Workflow` entries say how
+often the run delegated) and `claude_subagent_stats` (the result event's own
+counter; it covers the Agent tool only, since Workflow-script agents do not
+appear in the parent's stream).
 
 ## Example
 
