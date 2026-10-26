@@ -513,7 +513,7 @@ async def test_exec_normal_with_cwd_and_env(fake_binary: str, monkeypatch: pytes
     assert argv[:2] == [FAKE_BINARY, "exec"]
     assert _contains_seq(argv, ["-e", "A=b"])
     assert str(FAKE_PID) in argv
-    assert argv[-3:] == ["sh", "-c", "cd /work && echo hi"]
+    assert argv[-3:] == ["sh", "-c", enroot_provider._pid_namespace_wrap("cd /work && echo hi", "sh")]
     assert rec.calls[0]["timeout_s"] == 180
 
 
@@ -550,10 +550,69 @@ async def test_exec_user_mapping(
     provider, rec, _sr = _make_provider(monkeypatch, lambda argv: (0, "", ""), tmp_path)
     await provider.exec(_make_handle(tmp_path), "whoami", user=user)
     argv = rec.calls[0]["argv"]
+    wrap = enroot_provider._pid_namespace_wrap
     if expect_su:
-        assert argv[-1] == f"su -s /bin/sh -c {shlex.quote('whoami')} {shlex.quote(str(user))}"
+        assert argv[-1] == wrap(f"su -s /bin/sh -c {shlex.quote('whoami')} {shlex.quote(str(user))}", "sh")
     else:
-        assert argv[-1] == "whoami"
+        assert argv[-1] == wrap("whoami", "sh")
+
+
+def test_pid_namespace_wrap_shape() -> None:
+    cmd = "echo 'a b' && pkill -f python"
+    wrapped = enroot_provider._pid_namespace_wrap(cmd, "bash")
+    # Probe first, then exec the command as PID 1's child in a fresh PID + mount namespace with a private /proc.
+    assert wrapped.startswith("if unshare -pfm --mount-proc true 2>/dev/null; then exec unshare -pfm --mount-proc bash -c ")
+    # Without a working unshare the command is refused: distinct notice on stderr and a distinct exit code, no fallback run.
+    assert "else echo " in wrapped and "pid namespace unavailable" in wrapped
+    assert wrapped.endswith(f"; exit {enroot_provider.PID_NS_UNAVAILABLE_RETURN_CODE}; fi")
+    assert wrapped.count(f"bash -c {shlex.quote(cmd)}") == 1
+
+
+async def test_exec_pid_namespace_unavailable_is_sandbox_error(fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    provider, _rec, _sr = _make_provider(
+        monkeypatch, lambda argv: (enroot_provider.PID_NS_UNAVAILABLE_RETURN_CODE, "", enroot_provider.PID_NS_UNAVAILABLE_NOTICE + "\n"), tmp_path
+    )
+    result = await provider.exec(_make_handle(tmp_path), "echo hi")
+    assert result.error_type == "sandbox"
+    assert result.return_code == enroot_provider.SANDBOX_RUNTIME_RETURN_CODE
+
+
+async def test_exec_pid_namespace_default_on(fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    provider, rec, _sr = _make_provider(monkeypatch, lambda argv: (0, "", ""), tmp_path)
+    await provider.exec(_make_handle(tmp_path), "pkill -f python")
+    argv = rec.calls[0]["argv"]
+    assert argv[-3:-1] == ["sh", "-c"]
+    assert argv[-1].startswith("if unshare -pfm --mount-proc true")
+    assert "exec unshare -pfm --mount-proc sh -c 'pkill -f python'" in argv[-1]
+
+
+async def test_exec_pid_namespace_disabled(fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    provider, rec, _sr = _make_provider(monkeypatch, lambda argv: (0, "", ""), tmp_path, exec={"pid_namespace": False})
+    await provider.exec(_make_handle(tmp_path), "echo hi", cwd="/work")
+    assert rec.calls[0]["argv"][-3:] == ["sh", "-c", "cd /work && echo hi"]
+
+
+async def test_exec_pid_namespace_wraps_outside_su(fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    provider, rec, _sr = _make_provider(monkeypatch, lambda argv: (0, "", ""), tmp_path)
+    await provider.exec(_make_handle(tmp_path), "whoami", user="tester")
+    cmd = rec.calls[0]["argv"][-1]
+    assert cmd.startswith("if unshare -pfm --mount-proc true")
+    assert shlex.quote("su -s /bin/sh -c whoami tester") in cmd
+
+
+def test_private_tmp_mount(tmp_path: Path) -> None:
+    staging = tmp_path / "staging" / "nemo-gym-x"
+    staging.mkdir(parents=True)
+    args = enroot_provider._private_tmp_mount(staging)
+    assert args == ["-m", f"{staging / 'tmp'}:/tmp"]
+    assert (staging / "tmp").is_dir() and ((staging / "tmp").stat().st_mode & 0o7777) == 0o1777
+    # idempotent (connect/retry paths)
+    assert enroot_provider._private_tmp_mount(staging) == args
+
+
+def test_private_tmp_default_on() -> None:
+    assert enroot_provider.EnrootCreateConfig().private_tmp is True
+    assert enroot_provider.EnrootCreateConfig(private_tmp=False).private_tmp is False
 
 
 async def test_exec_passes_stdin(fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -141,6 +141,12 @@ class EnrootCreateConfig:
     """Settings for creating an Enroot sandbox container."""
 
     mount_point: str = DEFAULT_MOUNT_POINT
+    # Bind a per-sandbox host directory ({staging_dir}/tmp, removed with the sandbox)
+    # over /tmp. Without it every container inherits whatever the site's enroot fstab
+    # puts at /tmp -- on draco that is ONE job-wide directory shared by all sandboxes
+    # of a shard, so concurrent SWE-bench graders overwrote each other's
+    # /tmp/patch.diff and agents' temp files collided (2026-10-26 audit).
+    private_tmp: bool = True
     # Provider-scoped enroot paths. When None they are resolved under a
     # provider-managed base dir (see EnrootProvider.__init__). Pinning these and
     # passing them to every subprocess call is a correctness requirement: if
@@ -191,6 +197,13 @@ class EnrootExecConfig:
     extra_exec_args: list[str] = field(default_factory=list)
     concurrency: int = 32
     exec_shell: str = "sh"
+    # Run every exec'd command in its own PID namespace (util-linux `unshare -pfm
+    # --mount-proc` inside the container). Standalone enroot has no PID isolation
+    # (`ENROOT_UNSHARE_PID` is not an enroot option): sandbox processes live in the
+    # host's PID namespace and, running as the same uid, can signal every host
+    # process -- an agent's `pkill -f ...` killed the policy router and the Gym
+    # servers of three SWE-bench shards on 2026-10-26. See _pid_namespace_wrap.
+    pid_namespace: bool = True
 
     def __post_init__(self) -> None:
         if self.default_timeout_s is not None and self.default_timeout_s <= 0:
@@ -266,9 +279,51 @@ def _resource_gpu_env(resources: SandboxResources) -> dict[str, str]:
     return {"NVIDIA_VISIBLE_DEVICES": ",".join(str(i) for i in range(resources.gpu))}
 
 
+PID_NS_UNSHARE = "unshare -pfm --mount-proc"
+PID_NS_UNAVAILABLE_MARKER = "nemo-gym enroot: pid namespace unavailable"
+PID_NS_UNAVAILABLE_NOTICE = (
+    PID_NS_UNAVAILABLE_MARKER + " (unshare -pfm --mount-proc failed in this image); refusing to run the command without isolation"
+)
+PID_NS_UNAVAILABLE_RETURN_CODE = 125
+
+
+def _pid_namespace_wrap(command: str, shell: str) -> str:
+    """Wrap ``command`` so it runs in a fresh PID namespace (plus a mount namespace for /proc).
+
+    `unshare -pfm --mount-proc` needs CAP_SYS_ADMIN in the container's user namespace, which
+    enroot's unprivileged user namespace grants; the forked child becomes PID 1 of the new
+    namespace, so `ps`/`pkill` inside see only this exec's processes and every descendant
+    dies with it. Isolation is mandatory: if the probe (`unshare ... true`) fails, the command
+    is NOT run; the exec exits with PID_NS_UNAVAILABLE_RETURN_CODE and the marker on stderr,
+    which `_is_runtime_failure` turns into a sandbox (infrastructure) error rather than a
+    graded agent result. Before 2026-10-26 a silent fallback ran unisolated; on this cluster
+    an agent's `pkill -f verify` then killed 29 neighbouring sessions on the same node.
+    """
+    quoted = shlex.quote(command)
+    return (
+        f"if {PID_NS_UNSHARE} true 2>/dev/null; then exec {PID_NS_UNSHARE} {shell} -c {quoted}; "
+        f"else echo {shlex.quote(PID_NS_UNAVAILABLE_NOTICE)} >&2; exit {PID_NS_UNAVAILABLE_RETURN_CODE}; fi"
+    )
+
+
+def _private_tmp_mount(staging_dir: Path) -> list[str]:
+    """``enroot start`` arguments that bind a fresh per-sandbox directory over /tmp.
+
+    User ``-m`` mounts are applied after the system fstab, so this replaces any shared
+    /tmp the site configuration binds into the container. The directory lives under the
+    sandbox's staging dir and is removed with it; mode 1777 like a real /tmp.
+    """
+    private_tmp = staging_dir / "tmp"
+    private_tmp.mkdir(mode=0o1777, exist_ok=True)
+    private_tmp.chmod(0o1777)
+    return ["-m", f"{private_tmp}:/tmp"]
+
+
 def _is_runtime_failure(stderr: str) -> bool:
     """Best-effort: did enroot itself fail to run the command (vs the command failing)?"""
     low = stderr.lower()
+    if PID_NS_UNAVAILABLE_MARKER in low:
+        return True
     return any(line.startswith("[error]") for line in low.splitlines()) or any(
         marker in low for marker in ENROOT_RUNTIME_ERROR_MARKERS
     )
@@ -493,6 +548,8 @@ class EnrootProvider:
         if self._create_config.remap_root:
             argv.append("--root")
         argv += ["-m", f"{staging_dir}:{mount_point}"]
+        if self._create_config.private_tmp:
+            argv += _private_tmp_mount(staging_dir)
         for mount in self._exec_config.default_mounts:
             argv += ["-m", mount]
         for mount in extra_mounts:
@@ -769,6 +826,8 @@ class EnrootProvider:
         is_root = user == "root" or user == 0
         if user is not None and not is_root:
             effective_command = f"su -s /bin/sh -c {shlex.quote(effective_command)} {shlex.quote(str(user))}"
+        if self._exec_config.pid_namespace:
+            effective_command = _pid_namespace_wrap(effective_command, self._exec_config.exec_shell)
 
         argv = [
             self._binary,

@@ -38,6 +38,10 @@ sandbox:
       bypass_entrypoint: true
       rw: true
       remap_root: false
+      # Per-sandbox /tmp (bind of {staging}/tmp). The site enroot fstab may bind one
+      # job-wide directory to /tmp in every container; graders and agents then share
+      # temp files (SWE-bench /tmp/patch.diff overwrites, 2026-10-26).
+      private_tmp: true
       import_timeout_s: 1800
       create_timeout_s: 600
       start_timeout_s: 600
@@ -46,6 +50,12 @@ sandbox:
       exec_shell: bash
       default_timeout_s: 180
       concurrency: 32
+      # Each exec runs in its own PID namespace (`unshare -pfm --mount-proc` in the
+      # image). Enroot itself gives sandboxes no PID isolation, so without this an
+      # agent's `pkill -f ...` reaches the host's processes of the same user and the
+      # other sessions on the node. Mandatory: an image where unshare cannot start
+      # fails the exec as a sandbox error instead of running unisolated.
+      pid_namespace: true
     probe:
       timeout_s: 60
       deadline_s: 180
