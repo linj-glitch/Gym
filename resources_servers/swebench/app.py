@@ -14,6 +14,8 @@
 # limitations under the License.
 
 import re
+import hashlib
+import shlex
 import sys
 from shlex import quote
 from glob import glob
@@ -88,6 +90,10 @@ class SWEBenchInstanceRequest(BaseModel):
     difficulty: str
     subset: str
     split: str
+
+
+class UploadIntegrityError(RuntimeError):
+    """A file uploaded into the evaluation container was altered before use (shared /tmp, overwrite)."""
 
 
 class SWEBenchVerifyRequest(SWEBenchInstanceRequest, BaseVerifyRequest):
@@ -186,9 +192,26 @@ class DockerContainer(BaseModel):
 
         try:
             await self._inner_container.upload(local_path=src, remote_path=str(dest))
+            await self._verify_upload(src, dest)
         except Exception as exc:
             self._sandbox_error_type = self._sandbox_error_type or type(exc).__name__
             raise
+
+    async def _verify_upload(self, src: Path, dest: Path) -> None:
+        """Fail the evaluation if the file in the container is not the file we uploaded.
+
+        Guards the grade against a shared or tampered /tmp: on 2026-10-26 concurrent graders
+        on one node overwrote each other's /tmp/patch.diff and at least 55 attempts were graded
+        with another attempt's patch. A mismatch is an infrastructure error, never a grade.
+        """
+        expected = hashlib.sha256(src.read_bytes()).hexdigest()
+        result = await self._inner_container.exec(f"sha256sum {shlex.quote(str(dest))}")
+        actual = ((result.stdout or "").split() or [""])[0]
+        if result.return_code != 0 or actual != expected:
+            raise UploadIntegrityError(
+                f"{dest} in the evaluation container does not match the uploaded file for {self.instance_id}: "
+                f"expected sha256 {expected}, found {actual or 'none'} (rc={result.return_code}, stderr={(result.stderr or '')[:200]!r})"
+            )
 
     async def cleanup(self) -> None:
         try:
