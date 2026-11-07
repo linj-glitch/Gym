@@ -24,6 +24,12 @@ from swebench.harness.run_evaluation import *
 
 from nemo_gym import PARENT_DIR
 from nemo_gym.sandbox import AsyncSandbox
+from resources_servers.swebench.swe_gym_harness import patch_swe_gym_eval_script, register_swe_gym_harness
+
+
+# SWE-Gym rows (benchmarks/swebench/swe_gym) come from repositories swebench 4.1.0 does not know; register the
+# vendored harness entries before this process builds its first test spec or evaluation report.
+register_swe_gym_harness()
 
 
 # @bxyu-nvidia: We modify the run_instance function to:
@@ -257,6 +263,29 @@ async def run_instance(
 
 
 ########################################
+# START SWE Bench Verified instance patches
+########################################
+
+
+def patch_swebench_verified_env_vars(repo: str, env: Dict[str, Any]) -> None:
+    if MAP_REPO_TO_EXT.get(repo) == "py":
+        # Activate the SWEBench Verified python conda environment
+        env["CONDA_EXE"] = "/opt/miniconda3/bin/conda"
+        env["_CE_M"] = ""
+        env["CONDA_PREFIX"] = "/opt/miniconda3/envs/testbed"
+        env["CONDA_PROMPT_MODIFIER"] = "(testbed) "
+        env["_CE_CONDA"] = ""
+        env["CONDA_SHLVL"] = "2"
+        env["SHLVL"] = "0"
+        env["CONDA_PYTHON_EXE"] = "/opt/miniconda3/bin/python"
+        env["CONDA_DEFAULT_ENV"] = "testbed"
+        env["PATH"] = (
+            "/opt/miniconda3/envs/testbed/bin:/opt/miniconda3/condabin:/opt/miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        )
+        env["CONDA_PREFIX_1"] = "/opt/miniconda3"
+
+
+########################################
 # START SWE Bench Multilingual instance patches
 ########################################
 
@@ -267,6 +296,9 @@ async def run_instance(
 
 
 def patch_swebench_multilingual_golden_patch_pass(eval_sh: str, instance_id: str) -> str:
+    # SWE-Gym rows run eval.sh with the SWE-Gym fork's header (no `set -u`); see swe_gym_harness.
+    eval_sh = patch_swe_gym_eval_script(eval_sh, instance_id)
+
     # Run Maven tests without the daemon which causes issues with gson tests.
     eval_sh = eval_sh.replace("mvnd test", "mvn test")
 

@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# SWE-Gym (SWE-Gym/SWE-Gym, 2,438 training instances from eleven repositories)
+# with the Claude Code CLI harness and the swebench grader. Model traffic goes
+# straight from the sandbox to the Anthropic-compatible endpoint named by
+# CLAUDE_CODE_ANTHROPIC_BASE_URL (e.g. a Switchyard route), not through a Gym
+# model server; see responses_api_agents/claude_code_sandboxed_agent/README.md.
+#
+# Images: the grader asks the sandbox provider for
+# swebench/sweb.eval.x86_64.<owner>_1776_<repo>-<n>:latest (SWE-bench naming)
+# while SWE-Gym publishes xingyaoww/sweb.eval.x86_64.<owner>_s_<repo>-<n>.
+# Point the enroot squashfs cache at an alias directory built by
+# benchmarks/swebench/swe_gym/sqsh_aliases.py, or import the images under the
+# server-side name. prepare.py keeps only instances whose image is in the cache
+# named by NEMO_GYM_ENROOT_SQSH_CACHE.
+#
+# Harness: swebench 4.1.0 has no entries for the SWE-Gym repositories;
+# resources_servers/swebench/swe_gym_harness.py registers the SWE-Gym fork's.
+
+config_paths:
+- responses_api_agents/claude_code_sandboxed_agent/configs/claude_code_agent.yaml
+- resources_servers/swebench/configs/swebench.yaml
+
+claude_code_swe_gym_resources_server:
+  _inherit_from: swebench_resources_server
+
+  resources_servers:
+    swebench:
+      # SWE-Gym images keep the upstream repository's later history (tags,
+      # ORIG_HEAD and the clone reflog: python__mypy-10401 holds 2,896 commits
+      # beyond its base commit, up to tag v1.11.1), so the anti-cheating
+      # cleanup stays on, unlike SWE-bench Verified's pre-cleaned images.
+      apply_anti_cheating: true
+
+claude_code_sandboxed_agent_swe_gym:
+  _inherit_from: claude_code_sandboxed_agent
+  responses_api_agents:
+    claude_code_sandboxed_agent:
+      resources_server:
+        type: resources_servers
+        name: claude_code_swe_gym_resources_server
+      datasets:
+        - name: swe_gym
+          type: benchmark
+          jsonl_fpath: benchmarks/swebench/data/swe_gym_benchmark.jsonl
+          prepare_script: benchmarks/swebench/swe_gym/prepare.py
+          num_repeats: 1
