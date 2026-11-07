@@ -1,0 +1,87 @@
+claude_code_sandboxed_agent:
+  responses_api_agents:
+    claude_code_sandboxed_agent:
+      entrypoint: app.py
+      num_workers: 4
+      domain: agent
+      description: Claude Code CLI harness running in a provider sandbox.
+      value: Benchmark Claude Code on sandboxed SWE tasks with model traffic served by an Anthropic-compatible endpoint (e.g. a Switchyard route).
+      resources_server:
+        type: resources_servers
+        name: swebench_resources_server
+
+      debug: false
+
+      # Anthropic-compatible endpoint ROOT (client appends /v1/messages) —
+      # typically a Switchyard proxy reachable from inside the sandbox.
+      anthropic_base_url: ${oc.env:CLAUDE_CODE_ANTHROPIC_BASE_URL,null}
+      anthropic_auth_token: ${oc.env:CLAUDE_CODE_ANTHROPIC_AUTH_TOKEN,dummy}
+      # Model the CLI requests; for Switchyard this is a route id.
+      claude_model: ${policy_model_name}
+      # Network installer pin, used only when the pre-staged pair below is unset.
+      claude_code_version: ${oc.env:CLAUDE_CODE_VERSION,stable}
+      # Pre-staged CLI (set both or neither): `bash <script> --binary <binary>`
+      # runs instead of the network installer. Mount or upload the binary into
+      # the sandbox and point these at it.
+      remote_claude_install_script_path: null
+      remote_claude_binary_path: null
+      claude_max_turns: null
+      # CLAUDE_CODE_MAX_OUTPUT_TOKENS; null keeps the CLI default.
+      claude_max_output_tokens: null
+      # Skip native auto-discovery (hooks/plugins/MCP/memory/CLAUDE.md) for an
+      # isolated, reproducible runtime; mirrors claude_code_agent's `bare`.
+      bare: true
+      # Withheld from the full tool set when bare is false (--disallowed-tools):
+      # WebSearch is Anthropic's server-side tool (nothing through a proxy),
+      # WebFetch would let a benchmark rollout read the upstream fix online.
+      disallowed_tools: [WebSearch, WebFetch]
+      # Claude Code ultracode: --effort ultracode (xhigh effort plus the
+      # Workflow tool, which runs subagents in parallel) with
+      # CLAUDE_CODE_WORKFLOWS=true. Needs bare: false.
+      ultracode: false
+      # CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS; null keeps the CLI default.
+      workflow_max_concurrent_agents: null
+      # --effort for a non-ultracode run (low, medium, high, xhigh, max); null keeps
+      # the CLI default. Served models may accept only some values (Qwen3.8-Flash-Next:
+      # low, medium, xhigh).
+      claude_effort: null
+      # CLAUDE_CODE_MAX_CONTEXT_TOKENS: the served context window, so the CLI's
+      # auto-compaction fires relative to it for a model id it does not know.
+      claude_max_context_tokens: null
+      # MAX_THINKING_TOKENS: cap thinking per reply so it cannot consume the
+      # whole reply budget at high effort. null keeps the CLI default.
+      claude_max_thinking_tokens: null
+      # Appended to the CLI's system prompt (--append-system-prompt); the task
+      # prompt stays untouched. null adds nothing.
+      claude_append_system_prompt: null
+      # Extra CLI arguments, appended verbatim before the query.
+      claude_extra_args: []
+      # Extra environment for the sandboxed CLI process and its Bash children,
+      # as KEY=VALUE strings applied last (e.g. a proxy-based network block).
+      extra_env: []
+      # Forwarded per rollout via ANTHROPIC_CUSTOM_HEADERS so router session
+      # affinity (e.g. Switchyard escalation latching) works. null disables.
+      session_header_name: x-switchyard-session-id
+      # Loopback shim that rewrites the PDF/image blocks the Read tool attaches into
+      # a text notice before they reach a text-only endpoint (see text_only_shim.py).
+      text_only_shim: false
+      text_only_shim_port: 8101
+      # With the shim on, force every request's output_config.effort to this value
+      # (Claude Code sends "high" on some auxiliary/subagent calls regardless of --effort).
+      text_only_shim_force_effort: null
+
+      sandbox_provider: sandbox
+      sandbox_config:
+        ttl_s: 18000
+        ready_timeout_s: 1200
+        resources:
+          cpu: 2
+          memory_mib: 8192
+          disk_gib: 30
+        provider_options: {}
+        metadata:
+          harness: claude-code
+
+      sandbox_timeout: 10800  # 3hr default for harness execution
+
+      datasets: []
