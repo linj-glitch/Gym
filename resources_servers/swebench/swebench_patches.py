@@ -25,11 +25,14 @@ from swebench.harness.run_evaluation import *
 from nemo_gym import PARENT_DIR
 from nemo_gym.sandbox import AsyncSandbox
 from resources_servers.swebench.swe_gym_harness import patch_swe_gym_eval_script, register_swe_gym_harness
+from resources_servers.swebench.swe_smith_harness import register_swe_smith_harness
 
 
-# SWE-Gym rows (benchmarks/swebench/swe_gym) come from repositories swebench 4.1.0 does not know; register the
-# vendored harness entries before this process builds its first test spec or evaluation report.
+# SWE-Gym rows (benchmarks/swebench/swe_gym) and SWE-smith rows (benchmarks/swebench/swe_smith) come from
+# repositories swebench 4.1.0 does not know; register the vendored harness entries before this process builds
+# its first test spec or evaluation report.
 register_swe_gym_harness()
+register_swe_smith_harness()
 
 
 # @bxyu-nvidia: We modify the run_instance function to:

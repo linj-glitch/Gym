@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# SWE-smith Lite (300 instances balanced across the 131 repositories, drawn by
+# prepare_lite.py from the full pool) with the Claude Code CLI harness;
+# everything else as claude_code.yaml in this directory. One agent per config
+# file so `gym eval run` needs no --agent.
+
+config_paths:
+- responses_api_agents/claude_code_sandboxed_agent/configs/claude_code_agent.yaml
+- resources_servers/swebench/configs/swebench.yaml
+
+claude_code_swe_smith_lite_resources_server:
+  _inherit_from: swebench_resources_server
+
+  resources_servers:
+    swebench:
+      # Required for SWE-smith images (see claude_code.yaml).
+      apply_anti_cheating: true
+
+claude_code_sandboxed_agent_swe_smith_lite:
+  _inherit_from: claude_code_sandboxed_agent
+  responses_api_agents:
+    claude_code_sandboxed_agent:
+      resources_server:
+        type: resources_servers
+        name: claude_code_swe_smith_lite_resources_server
+      datasets:
+        - name: swe_smith_lite
+          type: benchmark
+          jsonl_fpath: benchmarks/swebench/data/swe_smith_lite_benchmark.jsonl
+          prepare_script: benchmarks/swebench/swe_smith/prepare_lite.py
+          num_repeats: 1

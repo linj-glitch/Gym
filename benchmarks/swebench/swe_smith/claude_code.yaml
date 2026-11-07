@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# SWE-smith (SWE-bench/SWE-smith-py: the 39,471 training instances with a
+# problem statement, 131 repositories) with the Claude Code CLI harness and the
+# swebench grader. Model traffic goes straight from the sandbox to the
+# Anthropic-compatible endpoint named by CLAUDE_CODE_ANTHROPIC_BASE_URL (e.g. a
+# Switchyard route), not through a Gym model server; see
+# responses_api_agents/claude_code_sandboxed_agent/README.md.
+#
+# Tasks: a row's setup_patch (the bug-introducing diff) is applied to the
+# repository image's clean checkout at seed time with the F2P test files
+# removed, and again in the grading container with the tests present; the
+# model patch must make the F2P tests pass (resources_servers/swebench/
+# swe_smith_harness.py). prepare.py keeps only instances whose repository image
+# is in the cache named by NEMO_GYM_ENROOT_SQSH_CACHE and reads the dataset from
+# the parquet shards in SWE_SMITH_DATASET_DIR when set.
+#
+# Images: one per repository, swebench/swesmith.x86_64.<owner>_1776_<repo>.<hash>
+# (the row's image_name); the grader asks for <image_name>:latest. Point the
+# enroot squashfs cache at an alias directory built by
+# benchmarks/swebench/swe_smith/sqsh_aliases.py over the imported files.
+#
+# Harness: swebench 4.1.0 has no entries for the SWE-smith repositories;
+# resources_servers/swebench/swe_smith_harness.py registers the profiles'
+# test commands and log parsers.
+
+config_paths:
+- responses_api_agents/claude_code_sandboxed_agent/configs/claude_code_agent.yaml
+- resources_servers/swebench/configs/swebench.yaml
+
+claude_code_swe_smith_resources_server:
+  _inherit_from: swebench_resources_server
+
+  resources_servers:
+    swebench:
+      # Required: the image's clone of the mirror holds the clean commit and
+      # every instance branch (bug commits) as remote-tracking refs, so the fix
+      # of any task is a `git diff` away until the cleanup leaves the seeded
+      # task commit as the only reachable history.
+      apply_anti_cheating: true
+
+claude_code_sandboxed_agent_swe_smith:
+  _inherit_from: claude_code_sandboxed_agent
+  responses_api_agents:
+    claude_code_sandboxed_agent:
+      resources_server:
+        type: resources_servers
+        name: claude_code_swe_smith_resources_server
+      datasets:
+        - name: swe_smith
+          type: benchmark
+          jsonl_fpath: benchmarks/swebench/data/swe_smith_benchmark.jsonl
+          prepare_script: benchmarks/swebench/swe_smith/prepare.py
+          num_repeats: 1

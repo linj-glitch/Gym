@@ -21,9 +21,10 @@ from shlex import quote
 from glob import glob
 from pathlib import Path
 from shutil import rmtree
+from tempfile import TemporaryDirectory
 from time import monotonic, time
 from traceback import format_exc
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from fastapi import Request
 from pydantic import BaseModel, Field
@@ -44,6 +45,7 @@ from nemo_gym.rollout_observability import SandboxObservation
 from nemo_gym.sandbox import AsyncSandbox, SandboxResources, SandboxSpec
 from nemo_gym.sandbox.config import resolve_provider_config, resolve_provider_metadata
 from nemo_gym.server_utils import SESSION_ID_KEY
+from resources_servers.swebench.swe_smith_harness import adapt_test_spec
 from resources_servers.swebench.swebench_patches import (
     patch_swebench_multilingual_golden_patch_pass,
     patch_swebench_multilingual_log_parsing,
@@ -90,6 +92,15 @@ class SWEBenchInstanceRequest(BaseModel):
     difficulty: str
     subset: str
     split: str
+
+    # Task setup, absent for SWE-bench and SWE-Gym rows. SWE-smith rows (benchmarks/swebench/swe_smith) carry
+    # the repository's environment image (one image serves every instance of a repository), the diff that
+    # turns the image's clean checkout into the task (the bug-introducing patch; `patch` above is its reverse,
+    # the fix) and the test files the agent must not see. The server applies `setup_patch` after the reset at
+    # seed time, removing `setup_hidden_files`, and again in the grading container with every file present.
+    image_name: Optional[str] = None
+    setup_patch: Optional[str] = None
+    setup_hidden_files: Optional[List[str]] = None
 
 
 class UploadIntegrityError(RuntimeError):
@@ -278,6 +289,51 @@ def strip_binary_diffs(patch: str) -> str:
     sections = re.split(r"(?m)^(?=diff --git )", patch)
     return "".join(sec for sec in sections if not re.search(r"(?m)^Binary files .* differ$", sec))
 
+
+SETUP_PATCH_REMOTE_PATH = "/nemo_gym_setup.patch"
+SETUP_SCRIPT_REMOTE_PATH = "/nemo_gym_setup_patch.sh"
+SETUP_PATCH_TIMEOUT_S = 900
+
+
+def setup_patch_command(workdir: str, hidden_files: Sequence[str]) -> str:
+    """Run setup_patch.sh on the uploaded diff, then remove both uploads whatever the outcome."""
+    env = (
+        f"WORKING_DIRECTORY={quote(workdir)} SETUP_PATCH={SETUP_PATCH_REMOTE_PATH} "
+        f"HIDDEN_FILES={quote(chr(10).join(hidden_files))}"
+    )
+    return (
+        f"{env} bash {SETUP_SCRIPT_REMOTE_PATH}; _rc=$?; "
+        f"rm -f {SETUP_PATCH_REMOTE_PATH} {SETUP_SCRIPT_REMOTE_PATH}; exit $_rc"
+    )
+
+
+async def apply_setup_patch(
+    sandbox: AsyncSandbox, workdir: str, instance_id: str, setup_patch: str, hidden_files: Sequence[str]
+) -> str:
+    """Turn the image's clean checkout in `workdir` into the task's starting state (see setup_patch.sh).
+
+    The patch is uploaded and applied with SWE-smith's apply chain, `hidden_files`
+    are removed, and the result becomes the repository's only commit (a root
+    commit), so the task tree is HEAD and nothing older is reachable. Returns the
+    script's report line; raises RuntimeError when the checkout could not be set up,
+    since neither the agent's task nor its grading would be the dataset's.
+    """
+    with TemporaryDirectory() as tmp_dir:
+        patch_fpath = Path(tmp_dir) / "setup.patch"
+        patch_fpath.write_text(setup_patch)
+        await sandbox.upload(patch_fpath, SETUP_PATCH_REMOTE_PATH)
+    await sandbox.upload(Path(__file__).parent / "setup_patch.sh", SETUP_SCRIPT_REMOTE_PATH)
+    result = await sandbox.exec(setup_patch_command(workdir, hidden_files), timeout_s=SETUP_PATCH_TIMEOUT_S)
+    stdout = result.stdout or ""
+    if result.return_code != 0:
+        raise RuntimeError(
+            f"Failed to set up the task checkout of {instance_id} (exit {result.return_code}).\n"
+            f"Stdout:\n{stdout}\nStderr:\n{result.stderr or ''}"
+        )
+    report = [line for line in stdout.splitlines() if line.startswith("SETUP_PATCH ")]
+    return report[-1] if report else stdout.strip()
+
+
 class SwebenchResourcesServer(SimpleResourcesServer):
     config: SwebenchResourcesServerConfig
 
@@ -321,13 +377,16 @@ class SwebenchResourcesServer(SimpleResourcesServer):
         return eval_sandbox
 
     def _make_test_spec(self, body: SWEBenchVerifyRequest) -> TestSpec:
-        return make_test_spec(
+        instance = body.model_dump()
+        test_spec = make_test_spec(
             # This accepts a SWEbenchInstance which is identically our body.
-            body.model_dump(),
+            instance,
             namespace="swebench",  # Dockerhub namespace
             instance_image_tag=LATEST,
             env_image_tag=LATEST,
         )
+        # SWE-smith rows grade in the repository's image with SWE-smith's test command; other rows pass through.
+        return adapt_test_spec(test_spec, instance)
 
     async def seed_session(self, request: Request, body: SWEBenchSeedSessionRequest) -> SWEBenchSeedSessionResponse:
         test_spec = self._make_test_spec(body)
@@ -339,6 +398,15 @@ class SwebenchResourcesServer(SimpleResourcesServer):
         # TODO @bxyu-nvidia: This pattern is not yet supported because calls to sandbox.exec use separate processes
         # For now, the activation is put on the harness side.
         # await eval_sandbox.exec("source /opt/miniconda3/bin/activate && conda activate testbed")
+
+        if body.setup_patch is not None:
+            # The task starts from the clean checkout plus the row's setup patch, minus the files it hides; the
+            # anti-cheating cleanup below then leaves that state as the only reachable history.
+            wd = (await eval_sandbox.exec("pwd")).stdout.strip()
+            report = await apply_setup_patch(
+                eval_sandbox, wd, test_spec.instance_id, body.setup_patch, body.setup_hidden_files or []
+            )
+            print(f"{test_spec.instance_id}: {report}")
 
         if self.config.apply_anti_cheating:
             # Remove the current Git repo's future history beyond the current commit to prevent the model from cheating.
@@ -408,6 +476,16 @@ Stderr:
                 await original_sandbox.stop()
             except:
                 print("Failed to stop original sandbox", format_exc(), file=sys.stderr)
+
+        if body.setup_patch is not None:
+            # Grading starts from the same task state as the agent did, with the hidden test files present
+            # (SWE-smith grades the bug commit, the parent of its "Remove F2P Tests" commit).
+            try:
+                workdir = (await eval_sandbox.exec("pwd")).stdout.strip()
+                await apply_setup_patch(eval_sandbox, workdir, test_spec.instance_id, body.setup_patch, [])
+            except BaseException:
+                await eval_sandbox.stop()
+                raise
 
         run_id = request.session[SESSION_ID_KEY]
         mock_container = DockerContainer(id=run_id, instance_id=test_spec.instance_id)
