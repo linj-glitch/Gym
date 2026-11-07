@@ -355,7 +355,9 @@ async def test_create_requires_image(fake_binary: str, monkeypatch: pytest.Monke
 
 
 async def test_create_rootfs_failure_raises(fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    provider, _rec, _sr = _make_provider(monkeypatch, lambda argv: (1, "", "boom"), tmp_path)
+    provider, rec, _sr = _make_provider(
+        monkeypatch, lambda argv: (1, "", "boom") if "create" in argv else (0, "", ""), tmp_path
+    )
 
     async def fake_ensure(image: str) -> Path:
         return tmp_path / "img.sqsh"
@@ -363,6 +365,46 @@ async def test_create_rootfs_failure_raises(fake_binary: str, monkeypatch: pytes
     monkeypatch.setattr(provider, "_ensure_image", fake_ensure)
     with pytest.raises(enroot_provider.EnrootCreateError, match="create failed"):
         await provider.create(SandboxSpec(image="ubuntu:22.04"))
+    # One retry, and the half-written rootfs is removed after each failed extraction.
+    assert len([c for c in rec.calls if "create" in c["argv"]]) == 2
+    removes = [c for c in rec.calls if "remove" in c["argv"]]
+    assert len(removes) == 2
+    assert all(c["argv"][-1] == _CREATED_NAME[0] for c in removes)
+
+
+async def test_create_retries_rootfs_once_after_a_failed_extraction(
+    fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    staging = tmp_path / "staging"
+    monkeypatch.setattr(enroot_provider.tempfile, "mkdtemp", lambda prefix: str(staging.mkdir() or staging))
+    create_calls = {"n": 0}
+
+    def responder(argv: list[str]) -> tuple[int, str, str]:
+        if "create" in argv:
+            create_calls["n"] += 1
+            if create_calls["n"] == 1:
+                return (1, "", "FATAL ERROR:write_file: failed to create file, because Interrupted system call")
+            return (0, "", "")
+        if "list" in argv:
+            return (0, _list_output(_CREATED_NAME[0], pid=FAKE_PID), "")
+        if "exec" in argv:
+            return (0, enroot_provider.READY_PROBE_EXPECTED, "")
+        return (0, "", "")
+
+    provider, rec, _sr = _make_provider(monkeypatch, responder, tmp_path)
+
+    async def fake_ensure(image: str) -> Path:
+        return tmp_path / "img.sqsh"
+
+    monkeypatch.setattr(provider, "_ensure_image", fake_ensure)
+    with caplog.at_level("WARNING"):
+        handle = await provider.create(SandboxSpec(image="ubuntu:22.04"))
+
+    assert handle.sandbox_id == _CREATED_NAME[0]
+    assert create_calls["n"] == 2
+    removes = [c for c in rec.calls if "remove" in c["argv"]]
+    assert len(removes) == 1 and removes[0]["argv"][-1] == _CREATED_NAME[0]
+    assert "retrying once" in caplog.text
 
 
 async def test_create_start_early_exit_cleans_up(
@@ -561,23 +603,35 @@ def test_pid_namespace_wrap_shape() -> None:
     cmd = "echo 'a b' && pkill -f python"
     wrapped = enroot_provider._pid_namespace_wrap(cmd, "bash")
     # Probe first, then exec the command as PID 1's child in a fresh PID + mount namespace with a private /proc.
-    assert wrapped.startswith("if unshare -pfm --mount-proc true 2>/dev/null; then exec unshare -pfm --mount-proc bash -c ")
+    assert wrapped.startswith(
+        "if unshare -pfm --mount-proc true 2>/dev/null; then exec unshare -pfm --mount-proc bash -c "
+    )
     # Without a working unshare the command is refused: distinct notice on stderr and a distinct exit code, no fallback run.
     assert "else echo " in wrapped and "pid namespace unavailable" in wrapped
     assert wrapped.endswith(f"; exit {enroot_provider.PID_NS_UNAVAILABLE_RETURN_CODE}; fi")
     assert wrapped.count(f"bash -c {shlex.quote(cmd)}") == 1
 
 
-async def test_exec_pid_namespace_unavailable_is_sandbox_error(fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_exec_pid_namespace_unavailable_is_sandbox_error(
+    fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     provider, _rec, _sr = _make_provider(
-        monkeypatch, lambda argv: (enroot_provider.PID_NS_UNAVAILABLE_RETURN_CODE, "", enroot_provider.PID_NS_UNAVAILABLE_NOTICE + "\n"), tmp_path
+        monkeypatch,
+        lambda argv: (
+            enroot_provider.PID_NS_UNAVAILABLE_RETURN_CODE,
+            "",
+            enroot_provider.PID_NS_UNAVAILABLE_NOTICE + "\n",
+        ),
+        tmp_path,
     )
     result = await provider.exec(_make_handle(tmp_path), "echo hi")
     assert result.error_type == "sandbox"
     assert result.return_code == enroot_provider.SANDBOX_RUNTIME_RETURN_CODE
 
 
-async def test_exec_pid_namespace_default_on(fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_exec_pid_namespace_default_on(
+    fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     provider, rec, _sr = _make_provider(monkeypatch, lambda argv: (0, "", ""), tmp_path)
     await provider.exec(_make_handle(tmp_path), "pkill -f python")
     argv = rec.calls[0]["argv"]
@@ -592,7 +646,9 @@ async def test_exec_pid_namespace_disabled(fake_binary: str, monkeypatch: pytest
     assert rec.calls[0]["argv"][-3:] == ["sh", "-c", "cd /work && echo hi"]
 
 
-async def test_exec_pid_namespace_wraps_outside_su(fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_exec_pid_namespace_wraps_outside_su(
+    fake_binary: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     provider, rec, _sr = _make_provider(monkeypatch, lambda argv: (0, "", ""), tmp_path)
     await provider.exec(_make_handle(tmp_path), "whoami", user="tester")
     cmd = rec.calls[0]["argv"][-1]

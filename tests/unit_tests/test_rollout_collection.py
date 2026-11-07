@@ -340,6 +340,66 @@ class TestRolloutCollection:
             sanitized = _rollout_for_export(malformed_result)
             assert b"secret" not in orjson.dumps(sanitized)
 
+    @pytest.mark.parametrize("status", [500, 503])
+    async def test_run_examples_turns_a_5xx_run_failure_into_a_sidecar_result(
+        self, monkeypatch: pytest.MonkeyPatch, status: int
+    ) -> None:
+        from aiohttp import ClientResponseError
+
+        row = {
+            AGENT_REF_KEY_NAME: {"name": "my_agent"},
+            TASK_INDEX_KEY_NAME: 7,
+            ROLLOUT_INDEX_KEY_NAME: 0,
+            "responses_create_params": {"input": "x"},
+        }
+        response = MagicMock()
+        response.status = status
+        mock_server_client = MagicMock()
+        mock_server_client.post = AsyncMock(return_value=response)
+        mock_server_client.global_config_dict = OmegaConf.create({"my_agent": {"responses_api_agents": {"impl": {}}}})
+        monkeypatch.setattr(
+            nemo_gym.rollout_collection, "setup_server_client_utils", lambda *args, **kwargs: mock_server_client
+        )
+
+        async def fail_raise_for_status(_response):
+            exc = ClientResponseError(request_info=MagicMock(), history=(), status=status, message="server error")
+            exc.response_content = b"EnrootCreateError: enroot create failed (code=1) for image='x'"
+            raise exc
+
+        monkeypatch.setattr(nemo_gym.rollout_collection, "raise_for_status", fail_raise_for_status)
+
+        returned_row, result = await next(RolloutCollectionHelper().run_examples([row]))
+
+        # A sidecar-shaped result: the consumer writes it to <output>_failures.jsonl (not the
+        # main jsonl) and the resume path retries the row, instead of the whole collection ending.
+        assert returned_row is row
+        assert result[NG_FAILURE_CLASS_KEY] == nemo_gym.rollout_collection.RUN_HTTP_FAILURE_CLASS
+        assert result[nemo_gym.rollout_collection.RUN_HTTP_STATUS_KEY] == status
+        assert "EnrootCreateError" in result[nemo_gym.rollout_collection.RUN_HTTP_ERROR_KEY]
+        assert result[TASK_INDEX_KEY_NAME] == 7
+        assert result[ROLLOUT_INDEX_KEY_NAME] == 0
+        assert NG_NO_PERSIST_KEY not in result
+
+    async def test_run_examples_still_raises_a_4xx_run_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from aiohttp import ClientResponseError
+
+        row = {AGENT_REF_KEY_NAME: {"name": "my_agent"}, TASK_INDEX_KEY_NAME: 1, ROLLOUT_INDEX_KEY_NAME: 0}
+        response = MagicMock()
+        response.status = 400
+        mock_server_client = MagicMock()
+        mock_server_client.post = AsyncMock(return_value=response)
+        mock_server_client.global_config_dict = OmegaConf.create({"my_agent": {"responses_api_agents": {"impl": {}}}})
+        monkeypatch.setattr(
+            nemo_gym.rollout_collection, "setup_server_client_utils", lambda *args, **kwargs: mock_server_client
+        )
+
+        async def fail_raise_for_status(_response):
+            raise ClientResponseError(request_info=MagicMock(), history=(), status=400, message="bad request")
+
+        monkeypatch.setattr(nemo_gym.rollout_collection, "raise_for_status", fail_raise_for_status)
+        with pytest.raises(ClientResponseError):
+            await next(RolloutCollectionHelper().run_examples([row]))
+
     @pytest.mark.parametrize("request_debug_enabled", [True, False])
     async def test_run_examples_logs_failed_run_when_request_debug_enabled(
         self,

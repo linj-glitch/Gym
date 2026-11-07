@@ -30,6 +30,7 @@ from time import time
 from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple, Union
 
 import orjson
+from aiohttp import ClientResponseError
 from omegaconf import DictConfig, OmegaConf
 from pydantic import BaseModel, Field, field_validator, model_validator
 from tqdm.asyncio import tqdm
@@ -135,6 +136,34 @@ logger = logging.getLogger(__name__)
 NG_FAILURE_CLASS_KEY = "_ng_failure_class"
 NG_NO_PERSIST_KEY = "_ng_no_persist"
 NG_TERMINAL_KEY = "_ng_failure_terminal"
+# Failure class of a rollout whose /run call the agent server answered with a 5xx.
+RUN_HTTP_FAILURE_CLASS = "run_http_error"
+RUN_HTTP_STATUS_KEY = "_ng_run_http_status"
+RUN_HTTP_ERROR_KEY = "_ng_run_http_error"
+_RUN_HTTP_ERROR_MAX_CHARS = 4000
+
+
+def _run_http_failure_result(row: Dict, exc: "ClientResponseError") -> Dict:
+    """Sidecar-shaped result for a /run call the agent server failed with a 5xx.
+
+    Carries the row identity the resume path reads, the status, and the start of the server's
+    error body (raise_for_status stores it on the exception), so a failed sandbox is visible in
+    ``<output>_failures.jsonl`` and retried on resume instead of ending the collection.
+    """
+    content = getattr(exc, "response_content", b"") or b""
+    if isinstance(content, bytes):
+        content = content.decode("utf-8", errors="replace")
+    result: Dict = {
+        NG_FAILURE_CLASS_KEY: RUN_HTTP_FAILURE_CLASS,
+        RUN_HTTP_STATUS_KEY: exc.status,
+        RUN_HTTP_ERROR_KEY: str(content)[:_RUN_HTTP_ERROR_MAX_CHARS],
+    }
+    for key in (TASK_INDEX_KEY_NAME, ROLLOUT_INDEX_KEY_NAME, ATTEMPT_INDEX_KEY_NAME, AGENT_REF_KEY_NAME):
+        if key in row:
+            result[key] = row[key]
+    return result
+
+
 NG_TRAJECTORY_KEY = "ng_trajectory"
 _MODEL_CALL_PAYLOAD_KEYS = ("request", "response", "request_raw", "response_raw")
 
@@ -1490,7 +1519,7 @@ Aggregate metrics: {aggregate_metrics_fpath}""")
                 res = await server_client.post(server_name=row["agent_ref"]["name"], url_path="/run", json=row)
                 try:
                     await raise_for_status(res)
-                except Exception:
+                except Exception as exc:
                     if is_global_aiohttp_client_request_debug_enabled():
                         print(
                             "[rollout_collection] /run failed "
@@ -1498,6 +1527,12 @@ Aggregate metrics: {aggregate_metrics_fpath}""")
                             f"row={json.dumps(_rollout_request_debug_summary(row), sort_keys=True)}",
                             flush=True,
                         )
+                    if isinstance(exc, ClientResponseError) and exc.status >= 500:
+                        # The agent server answered, but this one rollout failed inside it (a sandbox
+                        # that could not be created, an unhandled exception in /run). Raising here
+                        # would end the whole collection and lose every in-flight rollout; record a
+                        # sidecar failure instead, which the resume path retries up to max_attempts.
+                        return row, _run_http_failure_result(row, exc)
                     raise
                 return row, await get_response_json(res)
 

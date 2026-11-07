@@ -282,7 +282,8 @@ def _resource_gpu_env(resources: SandboxResources) -> dict[str, str]:
 PID_NS_UNSHARE = "unshare -pfm --mount-proc"
 PID_NS_UNAVAILABLE_MARKER = "nemo-gym enroot: pid namespace unavailable"
 PID_NS_UNAVAILABLE_NOTICE = (
-    PID_NS_UNAVAILABLE_MARKER + " (unshare -pfm --mount-proc failed in this image); refusing to run the command without isolation"
+    PID_NS_UNAVAILABLE_MARKER
+    + " (unshare -pfm --mount-proc failed in this image); refusing to run the command without isolation"
 )
 PID_NS_UNAVAILABLE_RETURN_CODE = 125
 
@@ -503,6 +504,30 @@ class EnrootProvider:
             os.replace(tmp, target)
             return target
 
+    async def _create_rootfs(self, name: str, sqsh_path: Path, image: str) -> tuple[int, str]:
+        """Run ``enroot create`` once; return (exit code, stderr). A timeout removes the partial rootfs."""
+        try:
+            code, _out, err = await self._run(
+                [self._binary, "create", "-n", name, *self._create_config.extra_create_args, str(sqsh_path)],
+                timeout_s=self._create_config.create_timeout_s,
+            )
+        except TimeoutError as e:
+            await self._remove_rootfs(name)
+            raise EnrootCreateError(f"enroot create timed out for image={image!r}: {e}") from e
+        return code, err
+
+    async def _remove_rootfs(self, name: str) -> None:
+        """Best-effort removal of a container whose rootfs may be half-written; errors are logged only."""
+        try:
+            code, _out, err = await self._run(
+                [self._binary, "remove", "-f", name], timeout_s=self._exec_config.default_timeout_s
+            )
+        except TimeoutError as e:
+            LOGGER.warning("enroot remove of the failed rootfs %r timed out: %s", name, e)
+            return
+        if code != 0:
+            LOGGER.warning("enroot remove of the failed rootfs %r exited %s: %s", name, code, err.strip()[-200:])
+
     async def create(self, spec: SandboxSpec) -> SandboxHandle:
         """Import/create the rootfs, launch a detached init, and return a ready handle."""
         if spec.ttl_s is not None:
@@ -525,15 +550,19 @@ class EnrootProvider:
         mount_point = self._create_config.mount_point
         name = CONTAINER_NAME_PREFIX + uuid.uuid4().hex
 
-        # Unpack the rootfs from the squashfs.
-        try:
-            code, _out, err = await self._run(
-                [self._binary, "create", "-n", name, *self._create_config.extra_create_args, str(sqsh_path)],
-                timeout_s=self._create_config.create_timeout_s,
-            )
-        except TimeoutError as e:
-            raise EnrootCreateError(f"enroot create timed out for image={spec.image!r}: {e}") from e
+        # Unpack the rootfs from the squashfs. One retry after a failed extraction: a parallel
+        # unsquashfs onto a busy network filesystem failed mid-way with "Interrupted system call"
+        # (2026-11-07, several sandboxes per hour on one node) while the same create succeeded
+        # when run again; the half-written rootfs is removed before the retry.
+        code, err = await self._create_rootfs(name, sqsh_path, spec.image)
         if code != 0:
+            LOGGER.warning(
+                "enroot create failed (code=%s) for image=%r; retrying once: %s", code, spec.image, err.strip()[-400:]
+            )
+            await self._remove_rootfs(name)
+            code, err = await self._create_rootfs(name, sqsh_path, spec.image)
+        if code != 0:
+            await self._remove_rootfs(name)
             raise EnrootCreateError(f"enroot create failed (code={code}) for image={spec.image!r}: {err.strip()}")
 
         # Host staging dir (bind-mounted in); must exist before start. The path
@@ -1033,13 +1062,9 @@ class EnrootProvider:
         if live_pid is not None:
             pid = live_pid
         elif pid is None:
-            raise RuntimeError(
-                f"enroot container {name!r} not found on this host; cannot connect ({detail})"
-            )
+            raise RuntimeError(f"enroot container {name!r} not found on this host; cannot connect ({detail})")
         if pid is None or not self._pid_has_container_marker(int(pid), name):
-            raise RuntimeError(
-                f"enroot container {name!r} init PID {pid} is stale or reused; cannot connect"
-            )
+            raise RuntimeError(f"enroot container {name!r} init PID {pid} is stale or reused; cannot connect")
         staging_dir = Path(descriptor.get("staging_dir") or (self._staging_root / name))
         if not staging_dir.is_dir():
             raise RuntimeError(
