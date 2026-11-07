@@ -28,6 +28,7 @@ import hashlib
 import logging
 import os
 import posixpath
+import random
 import shlex
 import shutil
 import signal
@@ -37,6 +38,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import monotonic
 from typing import IO, Any
 
 from nemo_gym.sandbox.providers.base import (
@@ -161,6 +163,10 @@ class EnrootCreateConfig:
     create_timeout_s: float | None = 600
     start_timeout_s: float | None = 600
     start_poll_s: float = 0.5
+    # How long connect() keeps asking enroot about a container before it
+    # concludes the container is really gone. Covers both a listing that fails
+    # under load and one that lags a create another process already finished.
+    connect_deadline_s: float = 60.0
     extra_import_args: list[str] = field(default_factory=list)
     extra_create_args: list[str] = field(default_factory=list)
     extra_start_args: list[str] = field(default_factory=list)
@@ -316,7 +322,11 @@ class EnrootProvider:
         cache_path = cfg.cache_path or os.environ.get("ENROOT_CACHE_PATH") or str(base / "cache")
         runtime_path = cfg.runtime_path or os.environ.get("ENROOT_RUNTIME_PATH") or str(base / "runtime")
         self._sqsh_cache_dir = Path(cfg.sqsh_cache_dir or (base / "sqsh"))
-        for directory in (data_path, cache_path, runtime_path, self._sqsh_cache_dir):
+        # Deterministic per-container staging roots (rather than mkdtemp) so a
+        # connect()ing process with the same config can re-derive the staging
+        # dir from the container name alone.
+        self._staging_root = base / "staging"
+        for directory in (data_path, cache_path, runtime_path, self._sqsh_cache_dir, self._staging_root):
             Path(directory).mkdir(parents=True, exist_ok=True, mode=0o700)
 
         self._enroot_env = {
@@ -471,8 +481,10 @@ class EnrootProvider:
         if code != 0:
             raise EnrootCreateError(f"enroot create failed (code={code}) for image={spec.image!r}: {err.strip()}")
 
-        # Host staging dir (bind-mounted in); must exist before start.
-        staging_dir = Path(tempfile.mkdtemp(prefix="nemo-gym-enroot-"))
+        # Host staging dir (bind-mounted in); must exist before start. The path
+        # is derived from the (unique) container name so connect() can find it.
+        staging_dir = self._staging_root / name
+        staging_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
 
         # Build the `enroot start` command line for the long-lived init.
         argv: list[str] = [self._binary, "start"]
@@ -545,7 +557,7 @@ class EnrootProvider:
                 raise EnrootCreateError(
                     f"enroot start exited early (code={instance.proc.returncode}) for {instance.name!r}: {stderr}"
                 )
-            pid, _running = await self._lookup_container(instance.name)
+            pid, _present, _detail = await self._lookup_container(instance.name)
             if pid is None:
                 # Nested-in-pyxis fallback: when enroot runs as real root
                 # (ENROOT_ALLOW_SUPERUSER) it does not create a per-container user
@@ -576,27 +588,64 @@ class EnrootProvider:
             return handle.read().decode(errors="replace").strip()
         return ""
 
-    async def _lookup_container(self, name: str) -> tuple[int | None, bool]:
-        """Return (pid, present). pid is the running init PID or None; present is
-        whether the rootfs exists at all (running or not)."""
+    async def _lookup_container(self, name: str) -> tuple[int | None, str | None, str]:
+        """Return (pid, present, detail).
+
+        ``present`` is tri-state on purpose. ``enroot list`` is the only way to
+        ask whether a rootfs exists, and under load it is also the call most
+        likely to fail transiently: it competes for the same subprocess budget
+        as every concurrent create/exec, and one timed-out listing says nothing
+        about the container. Collapsing that into "absent" makes a busy host
+        indistinguishable from a deleted sandbox, so a caller cannot tell a
+        retryable blip from a real failure.
+
+        - ``True``   -> the listing succeeded and named the container
+        - ``False``  -> the listing succeeded and did not name it (really gone)
+        - ``None``   -> the listing itself failed; nothing was learned
+
+        ``pid`` is the running init PID when the listing reports one. ``detail``
+        explains a ``None``, for the error a caller eventually raises.
+        """
         try:
-            code, out, _err = await self._run(
+            code, out, err = await self._run(
                 [self._binary, "list", "-f"],
                 timeout_s=self._exec_config.default_timeout_s,
             )
-        except TimeoutError:
-            return None, False
+        except TimeoutError as exc:
+            return None, None, f"enroot list timed out: {exc}"
         if code != 0:
-            return None, False
+            return None, None, f"enroot list exited {code}: {err.strip()[:400]}"
 
         lines = out.splitlines()
         for line in lines[1:]:  # skip the header row
             parts = line.split()
             if parts and parts[0] == name:
                 if len(parts) >= 2 and parts[1].isdigit():
-                    return int(parts[1]), True
-                return None, True
-        return None, False
+                    return int(parts[1]), True, ""
+                return None, True, ""
+        return None, False, "enroot list does not name this container"
+
+    async def _await_container(self, name: str) -> tuple[int | None, str]:
+        """Poll ``enroot list`` until it speaks for the container, or give up.
+
+        Returns (pid, detail). Retries both an unreadable listing and an absent
+        container: the caller connects to a sandbox another process created, and
+        under concurrency the listing can fail, or lag a create that has already
+        returned. A container that is genuinely gone simply exhausts the budget.
+        """
+        deadline = monotonic() + self._create_config.connect_deadline_s
+        attempt = 0
+        detail = "no lookup attempted"
+        while True:
+            pid, present, detail = await self._lookup_container(name)
+            if present:
+                return pid, ""
+            attempt += 1
+            if monotonic() >= deadline:
+                return None, f"{detail} (after {attempt} attempts)"
+            # Short, jittered backoff: a blip clears in well under a second,
+            # and the jitter keeps concurrent connects from re-colliding.
+            await asyncio.sleep(min(0.25 * attempt, 2.0) * (0.5 + random.random()))
 
     async def _verify_created_handle(self, handle: SandboxHandle) -> None:
         """Run the readiness probe until the sandbox responds, or raise.
@@ -874,3 +923,79 @@ class EnrootProvider:
     async def aclose(self) -> None:
         """No provider-wide resources to close."""
         return None
+
+    async def serialize_handle(self, handle: SandboxHandle, *, scope: str | None = None) -> dict[str, Any]:
+        """Return a descriptor another same-user, same-host process can connect to.
+
+        Enroot sandboxes are addressable by container name + init PID, and every
+        provider operation (`enroot exec <pid>`, the staging-dir fast paths) works
+        from any process owned by the launching user on the same host. That is
+        exactly the DeepSWE-style contract where a resources server creates the
+        sandbox and an agent server on the same node drives it. ``scope`` is
+        ignored (no lease control plane).
+        """
+        instance = handle.raw
+        return {
+            "provider": self.name,
+            # Consumers key on "sandbox_id" (the OpenSandbox descriptor shape);
+            # for enroot it is the container name.
+            "sandbox_id": instance.name,
+            "name": instance.name,
+            "container_pid": instance.container_pid,
+            "staging_dir": str(instance.staging_dir),
+            "mount_point": instance.mount_point,
+            "image": instance.image,
+            "env": dict(instance.env),
+            "sqsh_path": str(instance.sqsh_path),
+        }
+
+    async def connect(self, descriptor: Mapping[str, Any]) -> SandboxHandle:
+        """Rebuild a live handle from :meth:`serialize_handle`'s descriptor.
+
+        Requires the same host and OS user as the creating process. The init PID
+        is re-resolved from ``enroot list`` when available and always validated
+        against the container's unique cmdline marker, so a stale or reused PID
+        fails closed instead of joining the wrong namespace.
+
+        The connected handle does not own the detached ``enroot start`` process
+        (``start_pgid``/``proc`` are unset); ``close()`` on it still removes the
+        container rootfs, which the creator's ``close()`` tolerates.
+
+        Accepts a minimal ``{"sandbox_id": name}`` descriptor (what agents that
+        only relay the handle string send): the init PID comes from
+        ``enroot list``, the staging dir is re-derived from the container name,
+        and the mount point falls back to this provider's configured value.
+        """
+        name = descriptor.get("name") or descriptor.get("sandbox_id")
+        if not isinstance(name, str) or not name:
+            raise RuntimeError(f"enroot connect descriptor has no container name: {descriptor!r}")
+        pid: int | None = descriptor.get("container_pid")
+        live_pid, detail = await self._await_container(name)
+        if live_pid is not None:
+            pid = live_pid
+        elif pid is None:
+            raise RuntimeError(
+                f"enroot container {name!r} not found on this host; cannot connect ({detail})"
+            )
+        if pid is None or not self._pid_has_container_marker(int(pid), name):
+            raise RuntimeError(
+                f"enroot container {name!r} init PID {pid} is stale or reused; cannot connect"
+            )
+        staging_dir = Path(descriptor.get("staging_dir") or (self._staging_root / name))
+        if not staging_dir.is_dir():
+            raise RuntimeError(
+                f"enroot container {name!r} staging dir {staging_dir} not found; "
+                "connect() requires the same host and enroot base configuration as the creator"
+            )
+        instance = _EnrootInstance(
+            name=name,
+            sqsh_path=Path(descriptor.get("sqsh_path") or "unknown"),
+            staging_dir=staging_dir,
+            mount_point=descriptor.get("mount_point") or self._create_config.mount_point,
+            image=descriptor.get("image", ""),
+            env=dict(descriptor.get("env") or {}),
+            container_pid=int(pid),
+            start_pgid=None,
+            proc=None,
+        )
+        return SandboxHandle(sandbox_id=name, provider_name=self.name, raw=instance)
