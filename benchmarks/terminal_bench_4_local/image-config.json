@@ -1,0 +1,1233 @@
+{
+ "fetched": "2026-10-22",
+ "images": {
+  "atrx-vep-crispr-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:3b7abacf80231dfa41b60f72ba96df2469ebdcb515bfc152838b27febb74bbe9",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "atrx-vep-crispr-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:d5258ba288ecc81c8b5f73d365c89056da65246a71ac1c73789e3b602742027a",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "batched-eval-parity-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:a061e44bf26c4599296fbdbcbc093984fee13e9588ff504a3c7b3cb76bb5c22c",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "batched-eval-parity-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:f0c9a74018849a66823d94ea21c45d93e7732b901d98520340c3a35626b8ee1b",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "biped-contact-dynamics-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:5246f85b0387750fbdff08fbafedc04fda7d93476a9b1aa2904639255d5405c9",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "biped-contact-dynamics-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:d2b4852fc895422b414126212151e3a2d873dd9bae8c823e4360b7b585a28c8c",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "bun-sourcemap-leak-environment-v4.0.0": {
+   "cmd": [
+    "sleep",
+    "infinity"
+   ],
+   "config_digest": "sha256:694d0946d1962f2a802d73d558fcc0612a0d1d1fa1d92ccd2d12112c5c3b6909",
+   "entrypoint": [
+    "/usr/local/bin/docker-entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "bun-sourcemap-leak-verifier-v4.0.0": {
+   "cmd": [
+    "sleep",
+    "infinity"
+   ],
+   "config_digest": "sha256:d4de7ba4037a38acf7a64151a3f5d225b7308dea6c6ab9c59f958b833d521bf0",
+   "entrypoint": [
+    "/usr/local/bin/docker-entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/home/bun/app"
+  },
+  "cad-model-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:022fe1f4e16bb21025f89a392dad0b45fcc09e1cdf7e811fd141e50a89de8694",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "cad-model-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:625a4f4de01773743d8017db3628e0a6836740b9cb50369191c45167348cf58c",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "cargo-flight-dispatch-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:5b79cfc83e30ba84d580ba6568192fb920b6123f5d230cfa5fecba397919e8c6",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "cargo-flight-dispatch-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:239c4d52e921ede4e9caf27d670f5d9ba82c9ec454175870a9081ce2893a4612",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "coq-block-bound-environment-v4.0.0": {
+   "cmd": null,
+   "config_digest": "sha256:683171e92a6445a518e8509de2fb4aed8eabc66a3558f900c1d41de246e407ef",
+   "entrypoint": null,
+   "user": "root",
+   "workdir": "/app"
+  },
+  "coq-block-bound-verifier-v4.0.0": {
+   "cmd": null,
+   "config_digest": "sha256:ba505ed441db671beeea841d7455709e5fa4e6e0d0765bc2538a94f206b294d3",
+   "entrypoint": null,
+   "user": "root",
+   "workdir": "/home/coq"
+  },
+  "ctr-optimization-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:5c7c98966857d02d40d5214736eb4331173f44fcd95520cc50db9c8081169863",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "ctr-optimization-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:e3c075fe61553b3db636d38b8f54398811111f48bdf6f96643edef95759e9b23",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "cumulative-layout-shift-environment-v4.0.0": {
+   "cmd": [
+    "node"
+   ],
+   "config_digest": "sha256:f51684ef2aa90aa970c4268fa093510a589d0c07ba3ffa04d783aaed454cac8a",
+   "entrypoint": [
+    "docker-entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "cumulative-layout-shift-verifier-v4.0.0": {
+   "cmd": [
+    "node"
+   ],
+   "config_digest": "sha256:86501b7b8823c4419b15d9e6c23e2c20168093b3121ce4fee3c1decf9a10be9f",
+   "entrypoint": [
+    "docker-entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/tests"
+  },
+  "data-anonymization-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:6c2f4ed72aa9931a7eed181da7f76af2cff06b50a6dee937b23585375a9292bf",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "data-anonymization-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:0508b17dc69c96404ef74c55e753370ef748083043b4c735275c3720184f2b1f",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "distributed-dedup-environment-v4.0.0": {
+   "cmd": [
+    "jshell"
+   ],
+   "config_digest": "sha256:8325b4ca797d75cc898a13ebf5827906b78def624eff3cc417956f24d165d8c9",
+   "entrypoint": [
+    "/__cacert_entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "distributed-dedup-verifier-v4.0.0": {
+   "cmd": [
+    "jshell"
+   ],
+   "config_digest": "sha256:b8575cf6bb5a1f8638c85d97102a83aa8da3a32f869f2b05cd859b8f4ab7c609",
+   "entrypoint": [
+    "/__cacert_entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "embedding-drift-monitor-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:752bd02468ebe50f3e25d88477cdadbf859816b592c3416d6de971f5bfe29344",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "embedding-drift-monitor-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:c92d45c1f0f3e1fc50162697791095b8e0b151ed8ec31aa1be60dcc621b0766f",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "fin-saccr-rwa-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:a0da978a1dbc7e2c5f6faff69cc7130f0a7df788399a588bbb3ed499d354fd7c",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "fin-saccr-rwa-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:a1e31fc6eb5c7227f9d0147a687bd69c45f4503076c77a731b5f87fc939a317d",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "foodstuff-beta-activity-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:0e701dcb27488c0f14652bf6b8c8b18a54c906fe5f21743aa0111318b496e1cb",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "foodstuff-beta-activity-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:29c4703a7a2d97db9f8a166bd97d2706aa19808134279f5361b5bad9258e2873",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "formal-crypto-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:b73f154e0f52a22a91f12fa5d5285a583f534c9595a21bf9e6bd9800d6eeeeb2",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "formal-crypto-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:a1ff9a0e9a9a8bc9351b9aaf99f3c9124d3abdd4d7bdaa5fd2726274e838f52d",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "fp8-rmsnorm-gemm-environment-v4.0.0": {
+   "cmd": null,
+   "config_digest": "sha256:5dbe14ed73b21087f6a9c3a7ce1b1b3fafaa67b72615b63c5af02428a33c8506",
+   "entrypoint": [
+    "/opt/nvidia/nvidia_entrypoint.sh"
+   ],
+   "user": "agent",
+   "workdir": "/app"
+  },
+  "fp8-rmsnorm-gemm-verifier-v4.0.0": {
+   "cmd": null,
+   "config_digest": "sha256:b195b7b700de01b9da569705063f406f221061c2902e82caaf55b991dd5d7be2",
+   "entrypoint": [
+    "/opt/nvidia/nvidia_entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/tests"
+  },
+  "freecad-impeller-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:beba4879b4f26e7d2ca91d89804348c39ebcc4fe5436397a151ebb52f6b76d8b",
+   "entrypoint": [
+    "/usr/local/bin/_entrypoint.sh"
+   ],
+   "user": "root",
+   "workdir": "/app"
+  },
+  "freecad-impeller-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:e02965c004cb0ea052a4b131df85bd32ff1b1f96bab5f7e91835f02bb5f0fd1d",
+   "entrypoint": [
+    "/usr/local/bin/_entrypoint.sh"
+   ],
+   "user": "root",
+   "workdir": "/tmp"
+  },
+  "freecad-platform-drawing-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:7585b7ed4c79ce8d1ee6c1f68f16439af3fdc2b6774cf690c751d21445fcec91",
+   "entrypoint": [
+    "/usr/local/bin/_entrypoint.sh"
+   ],
+   "user": "root",
+   "workdir": "/app"
+  },
+  "freecad-platform-drawing-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:cb05143189e25e6bd51949726dd9362d1bbf921f623da6ef8967348055dbabfe",
+   "entrypoint": [
+    "/usr/local/bin/_entrypoint.sh"
+   ],
+   "user": "root",
+   "workdir": "/tmp"
+  },
+  "freecad-spring-clip-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:cd01c16e6905c9a85e61ee619677e1d7245c76bfb70e941429f76107b70f3a3b",
+   "entrypoint": [
+    "/usr/local/bin/_entrypoint.sh"
+   ],
+   "user": "root",
+   "workdir": "/app"
+  },
+  "freecad-spring-clip-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:70667b0f7d3f57d2c2430f6bbd6c052ff4e2f67c657425fda58843c81b32f25a",
+   "entrypoint": [
+    "/usr/local/bin/_entrypoint.sh"
+   ],
+   "user": "root",
+   "workdir": "/tmp"
+  },
+  "freight-dispatch-shift-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:87a2d29099c311730bfdf59df4635918b9211571a121a5ec62eb1201959f2318",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/workspace"
+  },
+  "freight-dispatch-shift-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:43180ade29fa710f8aa46179f23cbefe175d5ab58507be1eb8fffa9166f19cbe",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "glycan-ms2-elucidation-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:d093b1b50002276c8aed90ef7574cc9ff969f77d8074f64f4445442b3e12ac21",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "glycan-ms2-elucidation-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:aa67bf6af6117e118f2ee98adea6a2bb9941331e63efe40b56f733d184915a47",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "gsea-proteomics-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:e0cb18a7e29fd3558c4d0111404d1c2dfb3f4f1b42644adf645da6eac710665d",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "gsea-proteomics-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:9d3a7f377a061e7a9276809c5a9658797131679e0beaf23280434bf23e8e6193",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "heat-pump-warranty-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:69c0819a66aeb68d1849bcf1e8ecfabdffd6b5df5d56cafe8aa40d6b861e7788",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/workspace"
+  },
+  "heat-pump-warranty-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:edc420d4044cc42cce8064b2ffd0147770f3672bd18836851a4414ca6732be5b",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/tests"
+  },
+  "hof-topology-interpenetration-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:69d7ef84844e55efc84ad221676245635fa27592b2dc3cadb3f1301cdc0ecfcd",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "hof-topology-interpenetration-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:393f3c079b442047435ddd65ade60ef117522b3c7234facc1f878e6a7fd741d6",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "html-js-filter-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:ca299cf68c6c57e2af9c35e599ac5db48b390692436c872a62d20a44ba03070c",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "html-js-filter-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:4555fcc6d1cc124a427b193b3a49fdaa488dfe813c03041b303614060c49af2e",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "interleaved-vigenere-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:e5135f4d0da435f814ebf22f753c3ad5b9f5b89c9cb79a6834fb2214379021f5",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "interleaved-vigenere-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:fa8e8920abcc96ca2b61e13c37be92e1b880e25537c72835819ebebe22fd228e",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "intrastat-meldung-environment-v4.0.0": {
+   "cmd": [
+    "sleep",
+    "infinity"
+   ],
+   "config_digest": "sha256:8a3e84a403797711f9c2dd58799b1e0b137e994d9115f4bc13e02421619a9bfa",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/workspace"
+  },
+  "intrastat-meldung-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:29de8c127ee5241517745633874899c0a7f705123189c7289b9e0e4e24f2ec7b",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/workspace"
+  },
+  "jax-speedrun-gpu-environment-v4.0.0": {
+   "cmd": null,
+   "config_digest": "sha256:a58581bc54b8bbd5457cb78c99de448b7793f6f8a54550dfd8289d0c9e2c500d",
+   "entrypoint": [
+    "/opt/nvidia/nvidia_entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "jax-speedrun-gpu-verifier-v4.0.0": {
+   "cmd": null,
+   "config_digest": "sha256:8fd80113abe4a43a329952f6c2dfa104f1192f5586f68f0794bc3483788d6221",
+   "entrypoint": [
+    "/opt/nvidia/nvidia_entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": null
+  },
+  "ks-solver-cpp-environment-v4.0.0": {
+   "cmd": [
+    "bash"
+   ],
+   "config_digest": "sha256:1d6fc01e522c98a541644bcfd34c4b3a22c79cda894c52182cd80026f5c23ed9",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "ks-solver-cpp-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:5457ebfee266572145bd8fdfe88c0d0181c2906a939d1452bfbb1a92b8f1516f",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "kv-live-surgery-environment-v4.0.0": {
+   "cmd": null,
+   "config_digest": "sha256:3f19ab151068c6872cb23c993aa9040e5bfafd2d8cc8676d743f87d8f59918ba",
+   "entrypoint": [
+    "/app/entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "kv-live-surgery-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:1413cbf9f4b7fbbaec6001ddff60c9fcfde4fe2f7543a8c00cb9b752bfe085f0",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "lake-temp-glm-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:11bf15b64c65d50387aeec0e51afebf8c954e8391a07a485431d12f7e3c8d51a",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "lake-temp-glm-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:4bd55671a7d2d33af3da2df96d56b046220cd53afa4eef4ebae2ff183ef88464",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "layout-config-recreation-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:82a87af0c49e7dbd5a631be720c9082350cf2708851fcc5bffdc44b9b939bdfe",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "layout-config-recreation-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:3f8e1a8c2453d839ea220935e6c1a1fde99b1cccf83cb45f26d0c61cba082dae",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/tests"
+  },
+  "layout-config-recreation2-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:3e51604ffe9fa609d0704eaa721b3dbd24de4a802f7758e66ae50bccc76ec864",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "layout-config-recreation2-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:97f912c77910e031d04982bb38878bc27f617118e98f8fa63c5218a85c197542",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/tests"
+  },
+  "legacy-utility-triage-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:eadec3084b599c2ed244740daa875e6289b48364d03d1ea3ccfd89176ef4165c",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/workspace"
+  },
+  "legacy-utility-triage-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:49f11107b170285a1f601b3682f5c937b8bfe96fed374b55fe0df4dffc50aa9b",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/tests"
+  },
+  "live-database-cutover-environment-v4.0.0": {
+   "cmd": null,
+   "config_digest": "sha256:23d0f29195913a7e2d7f28a2f9ae0ca1a29e144349be1f6df01b4c9512ca7b13",
+   "entrypoint": [
+    "/app/entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "live-database-cutover-verifier-v4.0.0": {
+   "cmd": [
+    "sleep",
+    "infinity"
+   ],
+   "config_digest": "sha256:d695f7405220ca75e6dcad3270ea281a8d0fdc4601906ce4ec26e4a547dd738b",
+   "entrypoint": null,
+   "user": "root",
+   "workdir": null
+  },
+  "math-eval-grader-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:207ef6c9cc757206ec300bc819bbef4f94963f5b3c6d0ad2dc53f4410c8e8355",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "math-eval-grader-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:6be8df8c203493a67348509b17e64c7d6c358ae54f33dc4a68dcb997bb94cad8",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "medical-claims-processing-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:77302584ea1843494d96d531e2de1785b3e4d9954635366e49982b1de9455dc3",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "medical-claims-processing-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:feb35b9b3171cc56f58cc412191e9de4664ee107f3f44456c0ab6a6c8814f57c",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/shared"
+  },
+  "mp-checkpoint-consolidation-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:535371787029d14a175ab9d7ad255ee8f7c9c9ff9d04c2494c17de456d99ebfb",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "mp-checkpoint-consolidation-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:81007c95d4717c515252a5ed384bc52427746d7c5f52666e529b89c5bbd50969",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "music-harmony-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:1584159f573385ef78eb730a9ed5f0d1f902da0b52ab6063cbfab96b7b2707b4",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "music-harmony-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:1559b240bef1b7529e305b748a17eb7090c9a12172abe9da8931d63a0c47c457",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "mvcc-lsm-compaction-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:14687a2813bf182e2cbaa1db0fab7ae6b504c3fdb4978fa9e2666bf83339e844",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "mvcc-lsm-compaction-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:2c024fa4a7514a3bcf4b87c75c006cd980f0a17ad99e7f6da108da6584cc451e",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "nextjs-performance-environment-v4.0.0": {
+   "cmd": [
+    "node"
+   ],
+   "config_digest": "sha256:f22389c9efc5d5a24792caa7b10101416079c9f50f7d6a050007d843363c55f6",
+   "entrypoint": [
+    "docker-entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "nextjs-performance-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:7f19ac58454dc7ee0624a602416d005d7d110e9a310eb41bd0f27ceba7c83b88",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "ontology-kg-querying-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:2c36b0ce5569ef61dce62e04203c430fbf59dbdc3468fcc5071ea23dd1e810e0",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "ontology-kg-querying-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:7c5fda9ea52ef0f25c93d9f94c593b6fe73a71234c74a1632e0aa4bf77203bcb",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "payments-pipeline-fix-environment-v4.0.0": {
+   "cmd": null,
+   "config_digest": "sha256:d1021e5ea0de2c97334c0313791406ecb17cbc17208730e587444f821170ee96",
+   "entrypoint": [
+    "/app/entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "payments-pipeline-fix-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:bebea141f0e2be5e0c66e3af3bbcf9a88e9cb625d5555b04a3add1f7860f4bcf",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "photonic-waveguide-routing-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:2fcb5e4ba6fd05adc30162df9191ba04f3f1f417f6dbddc6a560af7d995f4742",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "photonic-waveguide-routing-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:4bbd2beb232f49c5534820967368ea4b20e821620b4f74b23c25dea9cb8f88b8",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "pretrain-shard-corruption-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:46262b514503fd6a820c68d2b8d3ccabbe1c9e20eef1d9e172d31edf6d5f231d",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "pretrain-shard-corruption-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:26478f85a16b59470b4ec97d78b264d5f71c7b406eba1354e322374d8b3c3c82",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "production-planning-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:2de0bb6545745f06f0cc78ec1578754498ef65f6a7d6c5e6190cac729cfc27d2",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "production-planning-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:028dae8639cbc51a2e13b5af9a880289fd3e741483a868f9f4ead23b08c71bfd",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "protein-autointerp-disulfide-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:764fd93836fe8be0431e8668f82990f4ba2072c18ad7d6242aab788af8b91354",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "protein-autointerp-disulfide-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:177623c19dc02373061a90c68eb67ba067a61e79e7335e7431daeb909c11a094",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "react-lead-form-environment-v4.0.0": {
+   "cmd": [
+    "node"
+   ],
+   "config_digest": "sha256:69c35055c2d0a04693d67a6a7f2d03846471b7553e80a0a9297641ce14ec33a4",
+   "entrypoint": [
+    "docker-entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "react-lead-form-verifier-v4.0.0": {
+   "cmd": [
+    "node"
+   ],
+   "config_digest": "sha256:b8be0ac0d7e8ecd85f2bff0971cc8454944120d34c23ea4992c40a687bd9ca67",
+   "entrypoint": [
+    "docker-entrypoint.sh"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "retro-console-soc-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:413ee4429f542fa41fba5caf7cc42c657b72e45c6979de360cf3f93a7e8555c9",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "retro-console-soc-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:0a126aea2886afff33a60904bab66198fc25b8a4729bf9c35e02fa5f27c34f22",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/"
+  },
+  "risk-scorer-replay-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:7749cfceef907e1b22ece3371ed41938678b66f16276673406eff7da080399ff",
+   "entrypoint": null,
+   "user": "nobody",
+   "workdir": "/app"
+  },
+  "risk-scorer-replay-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:a970169fb5e37d8e0ebee0fe2f14062490b837a76b0dcc0c34fab56b723554dc",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "roy-polymorph-cn-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:8e8800080144f7e2fadfcfc5d2227a1e37464e82b29f69574aec4d98b0508fd7",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "roy-polymorph-cn-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:8b2eddfaf38ece4e96cab6c2af1178f80f6ae995b3eb16e943a5628557e072f4",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "rs-archive-clone-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:3e67770020b2966edc53d079760186a7ab35d281fbbdbc83c8f6aeaa6997e153",
+   "entrypoint": null,
+   "user": "agent",
+   "workdir": "/app"
+  },
+  "rs-archive-clone-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:1b98c116e1825a7ed46a9ed9e4cc538779a08a3eb6c89c839a444f45befec6b3",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "satb-audio-transcription-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:f88164075410cc135dfe2902d36d6b3c8a7a5a5a758782fd5303d88d4018547a",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "satb-audio-transcription-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:2ca5953f25e7534c0192bde4f3e038c60b1fd568bcad37fcff6b96824a227b15",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "session-window-debug-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:ecca1f01fa70e5312269cda4294bb51cf8f863e3c2a9776d9e2e9755e7c5ddc9",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "session-window-debug-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:f5faefc96fb09b7a5810910ce6b6fa8a274871bfee7c3a844cc78941bed78c38",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/tests"
+  },
+  "sglang-qwen-burst-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:b5900b17b825c0bd995afefde2e1166929903a7620cd4fcb90b42b178970319c",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app/sglang"
+  },
+  "sglang-qwen-burst-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:87e83bad9b3d3f1f7676c4c574c586235fc2d3e50a5c9daee2b5b4025c4a4a4e",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "shadow-relay-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:a69d499c45805ec35a73ca96f2f9d8fbf3f857560e32b08ac33a0c3e47632252",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "shadow-relay-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:3a48c2cf6ac5e1668f7394b734adbf5d21d41e6eb9554c5a03eb604b8999ffb1",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "sound-change-cascade-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:aa95afb1f5e2cc4ca73becc5129f63d6909d45ca541bea74741f10e53f27f872",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "sound-change-cascade-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:9e8aa0dc355f35becc3029e3eb968681127372882f9afe3eec3da5d42732fb7a",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "takens-embedding-lean-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:7c9be665b8aa4af5a3bfbceeb798a3c833e211686a24e96fac9b20e6aaf804c4",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/task"
+  },
+  "takens-embedding-lean-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:2fa2aee16ba3e3f5d29d89a26c17b6621dc56f90102e9023898e0524d2c9e3a6",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/task"
+  },
+  "telecom-entity-resolution-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:936a0b2637c795e8540e4c5eae5dca5edf97678e7cfe340641644f8a19a37ad3",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "telecom-entity-resolution-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:818b9ffd9f0fb8bfd60d95f6d2ffb92feec8d5a80ca21e470480cf41121b38e9",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "uefi-bootkit-environment-v4.0.0": {
+   "cmd": [
+    "bash"
+   ],
+   "config_digest": "sha256:0454e2323e6aad0fe16d6b6b7b88771b7d46a017a14791b981038f0f14b4e3b8",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "uefi-bootkit-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:f567922f97642e52752a450bb134835d416eab8a0be0187a7e3605985523784a",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "vba-userform-port-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:f08a96b8493956a7146705dc9491386527f55381e3203ba1e01475be9275be92",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/workspace"
+  },
+  "vba-userform-port-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:19b15c2fef4ac29b5bf70d14ddbcd7966cab1ef94b3ef8df7efa4ccb729b13fd",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/workspace"
+  },
+  "vf2-speedup-networkx-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:b1aac44470bcfa0d1a8e02c15c2639ee014333e746afbf88838e6ab1790a011e",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "vf2-speedup-networkx-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:78e01cd8f7d31ce4e2d4b63b3c2cb4f2d0b1456fd5fc56087fdfd0786f67e418",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "vllm-deepseek-streaming-environment-v4.0.0": {
+   "cmd": [
+    "sleep",
+    "infinity"
+   ],
+   "config_digest": "sha256:5bc11c39d91491626b72d256fa91082279007ee79fd7344f345dde146b277783",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app/vllm"
+  },
+  "vllm-deepseek-streaming-verifier-v4.0.0": {
+   "cmd": [
+    "sleep",
+    "infinity"
+   ],
+   "config_digest": "sha256:01a003952886ca900b7865d598eb766419300b66b643d8afa3038656f34e27a5",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/vllm-workspace"
+  },
+  "vpp-loss-divergence-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:ac82d1dc7c756ba94a4496c06b8085f33b7b895a1510fcc9c0681d9cd713c1d9",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "vpp-loss-divergence-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:37cbe1cd07734093fb13cbd9be5878680d400245187358d304b4f02fff3cef32",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "wal-recovery-ordering-environment-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:d25383db096b75dbc49df49a4585ef007d035c11f5f348604eaeef08e66acac2",
+   "entrypoint": null,
+   "user": null,
+   "workdir": "/app"
+  },
+  "wal-recovery-ordering-verifier-v4.0.0": {
+   "cmd": [
+    "python3"
+   ],
+   "config_digest": "sha256:9bfb883ce0af4d4d3c52be22dd5687729ccf4f6e6ae6a7d31cf082681674e997",
+   "entrypoint": null,
+   "user": null,
+   "workdir": null
+  },
+  "wdm-design-environment-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:72ea3ecd4c8044f9c890ee24dac0e12791fa5a7a9323593c3a8924f6964a1221",
+   "entrypoint": [
+    "tini",
+    "--"
+   ],
+   "user": null,
+   "workdir": "/app"
+  },
+  "wdm-design-verifier-v4.0.0": {
+   "cmd": [
+    "/bin/bash"
+   ],
+   "config_digest": "sha256:f869b5c83e8512b02c2cebe1f97ed112c232ad0273676950a4b820cb510d2c0d",
+   "entrypoint": [
+    "tini",
+    "--"
+   ],
+   "user": null,
+   "workdir": null
+  }
+ },
+ "repository": "harborframework/terminal-bench",
+ "tag_suffix": "v4.0.0"
+}

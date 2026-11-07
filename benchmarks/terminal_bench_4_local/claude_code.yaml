@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Terminal-Bench 4.0 (local task tree + Harbor's published task images) with the
+# Claude Code CLI harness. Model traffic goes straight from the sandbox to the
+# Anthropic-compatible endpoint named by CLAUDE_CODE_ANTHROPIC_BASE_URL (e.g. a
+# Switchyard route). Prepare with
+#   gym eval prepare --benchmark terminal_bench_4_local/claude_code \
+#       ++prepare_script_args.tasks_dir=/path/to/terminal-bench-v4.0.0/tasks
+# (default category: the 52 CPU tasks; ++prepare_script_args.category=... selects another).
+
+config_paths:
+  - responses_api_agents/claude_code_sandboxed_agent/configs/claude_code_agent.yaml
+  - resources_servers/terminal_bench_4_local/configs/terminal_bench_4_local.yaml
+
+claude_code_terminal_bench_4_local_resources_server:
+  _inherit_from: terminal_bench_4_local_resources_server
+
+claude_code_sandboxed_agent_terminal_bench_4_local:
+  _inherit_from: claude_code_sandboxed_agent
+  responses_api_agents:
+    claude_code_sandboxed_agent:
+      # Official agent budget is 8 h per task; this is the harness cap (3.5 h fits a 4 h job).
+      sandbox_timeout: 12600
+      resources_server:
+        type: resources_servers
+        name: claude_code_terminal_bench_4_local_resources_server
+      datasets:
+        - name: terminal_bench_4_local
+          type: benchmark
+          jsonl_fpath: benchmarks/terminal_bench_4_local/data/benchmark.jsonl
+          prepare_script: benchmarks/terminal_bench_4_local/prepare.py
+          num_repeats: 3

@@ -1,0 +1,33 @@
+# Resources server: owns Terminal-Bench 4.0 task containers and grading (verify()) for
+# single-container sandbox providers (enroot, docker) using Harbor's published task images.
+terminal_bench_4_local_resources_server:   # instance name — how agents/CLI refer to this server
+  resources_servers:                        # server type: resources_servers | responses_api_agents | responses_api_models
+    terminal_bench_4_local:                 # implementation directory under resources_servers/
+      entrypoint: app.py
+      domain: agent
+      verified: false                       # set true once the benchmark has been baselined and reviewed
+
+      # Local Harbor task tree (one directory per task with task.toml, instruction.md, tests/, solution/),
+      # e.g. the v4.0.0 tag of https://huggingface.co/datasets/harborframework/terminal-bench.
+      tasks_dir: ${oc.env:TB4_TASKS_DIR,resources_servers/terminal_bench_4_local/data/tasks}
+      # Agent image {repository}:{task}-environment-{suffix}, grader image {repository}:{task}-verifier-{suffix}.
+      image_repository: harborframework/terminal-bench
+      image_tag_suffix: v4.0.0
+
+      is_verifying_golden_solution: false
+      golden_solution_timeout_sec: 3600
+      # 1.0 = each task's official verifier timeout.
+      verifier_timeout_multiplier: 1.0
+      task_cpu_multiplier: 1.0
+      task_memory_multiplier: 1.0
+
+      sandbox_provider: sandbox
+      sandbox_config:
+        ttl_s: 18000
+        ready_timeout_s: 1200
+        metadata:
+          benchmark: terminal-bench-4.0
+
+      logs_dir: resources_servers/terminal_bench_4_local/logs
+      clear_logs: false
+      test_output_tail_chars: 20000
