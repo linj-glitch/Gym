@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Terminal-Bench 2.1 (89 tasks, local task tree + each task's published image) with the
+# Claude Code CLI harness on a single-container sandbox provider. Model traffic goes
+# straight from the sandbox to the Anthropic-compatible endpoint named by
+# CLAUDE_CODE_ANTHROPIC_BASE_URL (e.g. a Switchyard route). Prepare with
+#   TB21_TASKS_DIR=/path/to/terminal-bench-2.1/tasks \
+#   gym eval prepare --benchmark terminal_bench_2_1_local/claude_code
+# The agent budget is per task: prepare.py writes each row's agent_timeout_s as the official
+# [agent].timeout_sec times TB21_TIMEOUT_SCALE (default 1), capped at TB21_TIMEOUT_CAP when set
+# and never below the official value; sandbox_timeout below is the harness-wide ceiling.
+
+config_paths:
+  - responses_api_agents/claude_code_sandboxed_agent/configs/claude_code_agent.yaml
+  - resources_servers/terminal_bench_4_local/configs/terminal_bench_4_local.yaml
+
+claude_code_terminal_bench_2_1_local_resources_server:
+  _inherit_from: terminal_bench_4_local_resources_server
+  resources_servers:
+    terminal_bench_4_local:
+      # Image from each task's [environment].docker_image; grading in the agent container.
+      entrypoint: app_task_image.py
+      tasks_dir: ${oc.env:TB21_TASKS_DIR,resources_servers/terminal_bench_4_local/data/tasks-2.1}
+      logs_dir: resources_servers/terminal_bench_4_local/logs-2.1
+
+claude_code_sandboxed_agent_terminal_bench_2_1_local:
+  _inherit_from: claude_code_sandboxed_agent
+  responses_api_agents:
+    claude_code_sandboxed_agent:
+      # Ends the CLI at the row's agent_timeout_s (handed over in the sandbox descriptor).
+      entrypoint: app_task_timeout.py
+      # Ceiling for every task (3 h fits a 4 h job); the longest official budget is 12000 s.
+      sandbox_timeout: 10800
+      resources_server:
+        type: resources_servers
+        name: claude_code_terminal_bench_2_1_local_resources_server
+      datasets:
+        - name: terminal_bench_2_1_local
+          type: benchmark
+          jsonl_fpath: benchmarks/terminal_bench_2_1_local/data/benchmark.jsonl
+          prepare_script: benchmarks/terminal_bench_2_1_local/prepare.py
+          num_repeats: 1
