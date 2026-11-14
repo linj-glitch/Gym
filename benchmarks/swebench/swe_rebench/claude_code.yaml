@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# SWE-rebench, March 2026 leaderboard split (nebius/SWE-rebench-leaderboard,
+# split 2026_03: 110 Python instances from about 70 repositories) with the
+# Claude Code CLI harness and the swebench grader. Model traffic goes straight
+# from the sandbox to the Anthropic-compatible endpoint named by
+# CLAUDE_CODE_ANTHROPIC_BASE_URL (e.g. a Switchyard route), not through a Gym
+# model server; see responses_api_agents/claude_code_sandboxed_agent/README.md.
+#
+# Rows: prepare.py reads the split from the parquet file in
+# SWE_REBENCH_DATASET_DIR when set (else the Hub) and keeps the instances whose
+# image is in the cache named by NEMO_GYM_ENROOT_SQSH_CACHE. Each row carries
+# its own harness settings (install_config: test command, log parser) and its
+# image name; resources_servers/swebench/swe_rebench_harness.py builds the test
+# spec and grades from them, as the SWE-rebench fork of SWE-bench does.
+#
+# Images: one per instance under their Docker Hub name
+# (swerebench/sweb.eval.x86_64.<owner>_1776_<repo>-<n>:latest); the grader asks
+# the sandbox provider for exactly that name, so squashfs files imported under
+# it need no alias directory. conda lives at /opt/conda in these images; the
+# agent command and the eval script activate `testbed` from either location.
+
+config_paths:
+- responses_api_agents/claude_code_sandboxed_agent/configs/claude_code_agent.yaml
+- resources_servers/swebench/configs/swebench.yaml
+
+claude_code_swe_rebench_resources_server:
+  _inherit_from: swebench_resources_server
+
+  resources_servers:
+    swebench:
+      # A safeguard, not a necessity for the images inspected: they were built
+      # by cloning the repository and resetting to the base commit, HEAD is
+      # detached at the base commit with no refs, remotes or tags, and
+      # .git/ORIG_HEAD names the clone's later head, whose object is not in the
+      # store (4 of 110 images checked on 2026-11-14: no commit beyond the base,
+      # reachable or unreachable). The cleanup removes ORIG_HEAD and prunes
+      # whatever an unchecked image may still hold.
+      apply_anti_cheating: true
+
+claude_code_sandboxed_agent_swe_rebench:
+  _inherit_from: claude_code_sandboxed_agent
+  responses_api_agents:
+    claude_code_sandboxed_agent:
+      resources_server:
+        type: resources_servers
+        name: claude_code_swe_rebench_resources_server
+      datasets:
+        - name: swe_rebench_2026_03
+          type: benchmark
+          jsonl_fpath: benchmarks/swebench/data/swe_rebench_2026_03_benchmark.jsonl
+          prepare_script: benchmarks/swebench/swe_rebench/prepare.py
+          num_repeats: 1

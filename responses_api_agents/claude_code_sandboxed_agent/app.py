@@ -302,8 +302,12 @@ class ClaudeCodeSandboxedAgent(SimpleResponsesAPIAgent):
         dance are sandbox-path specifics.
         """
         # Same conda dance as the OpenCode harness: SWE task images may carry a
-        # testbed env; activation is tolerated to fail on images without it.
-        conda_activate = "{ source /opt/miniconda3/bin/activate && conda activate testbed || true; }"
+        # testbed env (SWE-bench images under /opt/miniconda3, SWE-rebench images
+        # under /opt/conda); activation is tolerated to fail on images without it.
+        conda_activate = (
+            "{ { source /opt/miniconda3/bin/activate 2>/dev/null || source /opt/conda/bin/activate; }"
+            " && conda activate testbed || true; }"
+        )
 
         if self.config.remote_claude_install_script_path and self.config.remote_claude_binary_path:
             # Pre-staged build (mounted or uploaded); the script puts it on PATH.

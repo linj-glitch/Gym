@@ -25,6 +25,7 @@ from swebench.harness.run_evaluation import *
 from nemo_gym import PARENT_DIR
 from nemo_gym.sandbox import AsyncSandbox
 from resources_servers.swebench.swe_gym_harness import patch_swe_gym_eval_script, register_swe_gym_harness
+from resources_servers.swebench.swe_rebench_harness import eval_report
 from resources_servers.swebench.swe_smith_harness import register_swe_smith_harness
 
 
@@ -33,6 +34,8 @@ from resources_servers.swebench.swe_smith_harness import register_swe_smith_harn
 # its first test spec or evaluation report.
 register_swe_gym_harness()
 register_swe_smith_harness()
+# SWE-rebench rows (benchmarks/swebench/swe_rebench) need no registration: their test command and log parser
+# travel in the row, and `eval_report` below grades them with the row's parser.
 
 
 # @bxyu-nvidia: We modify the run_instance function to:
@@ -72,7 +75,7 @@ async def run_instance(
         test_output_path = log_dir / LOG_TEST_OUTPUT
         if not test_output_path.exists():
             raise ValueError(f"Test output file {test_output_path} does not exist")
-        report = get_eval_report(
+        report = eval_report(
             test_spec=test_spec,
             prediction=pred,
             test_log_path=test_output_path,
@@ -225,7 +228,7 @@ async def run_instance(
 
         # Get report from test output
         logger.info(f"Grading answer for {instance_id}...")
-        report = get_eval_report(
+        report = eval_report(
             test_spec=test_spec,
             prediction=pred,
             test_log_path=test_output_path,

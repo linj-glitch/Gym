@@ -100,7 +100,10 @@ class TestBuildCommand:
     def test_conda_activation_is_tolerated_to_fail(self) -> None:
         command = _agent()._build_command("q")
 
-        assert "source /opt/miniconda3/bin/activate && conda activate testbed || true" in command
+        assert (
+            "{ source /opt/miniconda3/bin/activate 2>/dev/null || source /opt/conda/bin/activate; }"
+            " && conda activate testbed || true"
+        ) in command
 
 
 class TestBuildEnv:

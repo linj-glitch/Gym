@@ -45,6 +45,7 @@ from nemo_gym.rollout_observability import SandboxObservation
 from nemo_gym.sandbox import AsyncSandbox, SandboxResources, SandboxSpec
 from nemo_gym.sandbox.config import resolve_provider_config, resolve_provider_metadata
 from nemo_gym.server_utils import SESSION_ID_KEY
+from resources_servers.swebench.swe_rebench_harness import make_swe_rebench_test_spec
 from resources_servers.swebench.swe_smith_harness import adapt_test_spec
 from resources_servers.swebench.swebench_patches import (
     patch_swebench_multilingual_golden_patch_pass,
@@ -101,6 +102,11 @@ class SWEBenchInstanceRequest(BaseModel):
     image_name: Optional[str] = None
     setup_patch: Optional[str] = None
     setup_hidden_files: Optional[List[str]] = None
+
+    # SWE-rebench rows (benchmarks/swebench/swe_rebench) carry their own harness settings: the test command
+    # and the log parser's name, which SWE-bench keeps in per-repository tables, and `image_name`, the
+    # instance's prebuilt image. See swe_rebench_harness.
+    install_config: Optional[Dict[str, Any]] = None
 
 
 class UploadIntegrityError(RuntimeError):
@@ -198,8 +204,13 @@ class DockerContainer(BaseModel):
 
     async def copy(self, src: Path, dest: Path) -> None:
         if "eval.sh" in str(src):
-            data = src.read_text()
-            src.write_text(patch_swebench_multilingual_golden_patch_pass(data, self.instance_id))
+            # newline="": keep the script's line endings. A test patch for a file with CRLF line endings carries
+            # "\r\n" lines inside the script's heredoc; universal-newline reading turned them into "\n" and
+            # `git apply` then rejected the patch (SWE-rebench pgmpy__pgmpy-3137, golden check 2026-11-14).
+            with src.open("r", newline="") as f:
+                data = f.read()
+            with src.open("w", newline="") as f:
+                f.write(patch_swebench_multilingual_golden_patch_pass(data, self.instance_id))
 
         try:
             await self._inner_container.upload(local_path=src, remote_path=str(dest))
@@ -378,6 +389,10 @@ class SwebenchResourcesServer(SimpleResourcesServer):
 
     def _make_test_spec(self, body: SWEBenchVerifyRequest) -> TestSpec:
         instance = body.model_dump()
+        # SWE-rebench rows are built from their install_config (swebench's tables do not know them).
+        rebench_test_spec = make_swe_rebench_test_spec(instance)
+        if rebench_test_spec is not None:
+            return rebench_test_spec
         test_spec = make_test_spec(
             # This accepts a SWEbenchInstance which is identically our body.
             instance,
