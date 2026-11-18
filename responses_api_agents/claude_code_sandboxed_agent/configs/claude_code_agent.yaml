@@ -66,6 +66,8 @@ claude_code_sandboxed_agent:
       # a text notice before they reach a text-only endpoint (see text_only_shim.py).
       text_only_shim: false
       text_only_shim_port: 8101
+      # Block types the shim turns into text; [document] lets images through to a vision endpoint.
+      text_only_shim_block_types: [document, image]
       # With the shim on, force every request's output_config.effort to this value
       # (Claude Code sends "high" on some auxiliary/subagent calls regardless of --effort).
       text_only_shim_force_effort: null

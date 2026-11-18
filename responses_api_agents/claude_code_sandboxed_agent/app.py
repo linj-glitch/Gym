@@ -45,7 +45,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import Request
-from pydantic import ConfigDict, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from nemo_gym.base_resources_server import BaseRunRequest, BaseVerifyRequest, BaseVerifyResponse
 from nemo_gym.base_responses_api_agent import (
@@ -155,6 +155,9 @@ class ClaudeCodeSandboxedAgentConfig(BaseResponsesAPIAgentConfig):
     # the run. The CLI is pointed at the shim; the shim relays to anthropic_base_url.
     text_only_shim: bool = False
     text_only_shim_port: int = 8101
+    # Block types the shim turns into text. ["document"] lets image blocks through to a model
+    # served with vision while PDFs are still replaced (no chat endpoint here takes them).
+    text_only_shim_block_types: List[str] = Field(default_factory=lambda: ["document", "image"])
     # With the shim on, rewrite every request's output_config.effort to this value. Claude
     # Code sends "high" on some auxiliary and subagent calls regardless of --effort, which a
     # template that knows only low/medium/xhigh (Qwen3.8-Flash-Next) rejects with HTTP 400.
@@ -279,6 +282,7 @@ class ClaudeCodeSandboxedAgent(SimpleResponsesAPIAgent):
                 port=self.config.text_only_shim_port,
                 debug=self.config.debug,
                 force_effort=self.config.text_only_shim_force_effort,
+                block_types=self.config.text_only_shim_block_types,
             )
 
     def _cli_base_url(self) -> str:

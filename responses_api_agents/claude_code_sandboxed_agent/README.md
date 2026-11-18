@@ -73,7 +73,8 @@ appear in the parent's stream).
   shim on, the agent hosts a loopback relay (`text_only_shim_port`, default 8101) between
   the CLI and `anthropic_base_url` that rewrites those blocks into a text notice telling the
   model to extract the content with command-line tools; everything else, streaming included,
-  is relayed untouched (`text_only_shim.py`).
+  is relayed untouched (`text_only_shim.py`). `text_only_shim_block_types` (default `[document, image]`) names the block types that are rewritten:
+  `[document]` lets image blocks through to a model served with vision and still replaces PDFs.
 
 ## Example
 

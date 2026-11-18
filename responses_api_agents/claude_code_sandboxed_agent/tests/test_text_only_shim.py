@@ -5,6 +5,7 @@ import base64
 import json
 import socket
 
+import pytest
 from aiohttp import ClientSession, web
 
 import nemo_gym.server_utils as server_utils
@@ -128,3 +129,30 @@ def test_force_effort_rewrites_only_when_different() -> None:
     no_config = {"messages": [{"role": "user", "content": "hi"}]}
     forced, changed = rewrite_messages_body(no_config, force_effort="medium")
     assert changed == 1 and forced["output_config"] == {"effort": "medium"}
+
+
+def test_block_types_document_only_lets_images_through() -> None:
+    image = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aGk="}}
+    document = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "aGk="}}
+    body = {
+        "messages": [
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": [image, document]}]},
+            {"role": "user", "content": [image]},
+        ]
+    }
+    rewritten, replaced = rewrite_messages_body(body, block_types=("document",))
+    assert replaced == 1
+    inner = rewritten["messages"][0]["content"][0]["content"]
+    assert inner[0] == image
+    assert inner[1]["type"] == "text" and "cannot read document attachments" in inner[1]["text"]
+    assert "images" not in inner[1]["text"]
+    assert rewritten["messages"][1] == body["messages"][1]
+    # The default still replaces both kinds, with the notice that names images.
+    both, replaced = rewrite_messages_body(body)
+    assert replaced == 3
+    assert "cannot view documents or images" in both["messages"][1]["content"][0]["text"]
+
+
+def test_shim_rejects_unknown_block_types() -> None:
+    with pytest.raises(ValueError):
+        TextOnlyShim(upstream_root="http://127.0.0.1:1", port=1, block_types=["video"])

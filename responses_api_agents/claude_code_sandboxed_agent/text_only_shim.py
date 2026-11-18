@@ -54,11 +54,18 @@ def _block_size_kib(block: dict[str, Any]) -> int | None:
     return None
 
 
-def placeholder_text(block: dict[str, Any]) -> str:
+def placeholder_text(block: dict[str, Any], block_types: tuple[str, ...] = NON_TEXT_BLOCK_TYPES) -> str:
     source = block.get("source") or {}
     media_type = source.get("media_type") or block.get("type")
     size = _block_size_kib(block)
     size_text = f", {size} KB" if size is not None else ""
+    if "image" not in block_types:
+        # Images reach the model (a vision endpoint); only documents are turned into text.
+        return (
+            f"[{block.get('type')} content omitted ({media_type}{size_text}): this model cannot read document "
+            "attachments. Extract the content with command-line tools instead, e.g. pdftotext or a Python PDF "
+            "library, and read the text output.]"
+        )
     return (
         f"[{block.get('type')} content omitted ({media_type}{size_text}): this model cannot view documents or "
         "images. Extract the content with command-line tools instead, e.g. pdftotext or a Python PDF/image "
@@ -66,18 +73,18 @@ def placeholder_text(block: dict[str, Any]) -> str:
     )
 
 
-def rewrite_content(content: Any) -> tuple[Any, int]:
-    """Replace document/image blocks in a content value; returns (new_content, replaced_count)."""
+def rewrite_content(content: Any, block_types: tuple[str, ...] = NON_TEXT_BLOCK_TYPES) -> tuple[Any, int]:
+    """Replace blocks of the given types in a content value; returns (new_content, replaced_count)."""
     if not isinstance(content, list):
         return content, 0
     replaced = 0
     new_content = []
     for block in content:
-        if isinstance(block, dict) and block.get("type") in NON_TEXT_BLOCK_TYPES:
-            new_content.append({"type": "text", "text": placeholder_text(block)})
+        if isinstance(block, dict) and block.get("type") in block_types:
+            new_content.append({"type": "text", "text": placeholder_text(block, block_types)})
             replaced += 1
         elif isinstance(block, dict) and block.get("type") == "tool_result":
-            inner, inner_replaced = rewrite_content(block.get("content"))
+            inner, inner_replaced = rewrite_content(block.get("content"), block_types)
             replaced += inner_replaced
             new_content.append({**block, "content": inner} if inner_replaced else block)
         else:
@@ -85,10 +92,14 @@ def rewrite_content(content: Any) -> tuple[Any, int]:
     return new_content, replaced
 
 
-def rewrite_messages_body(body: dict[str, Any], force_effort: str | None = None) -> tuple[dict[str, Any], int]:
+def rewrite_messages_body(
+    body: dict[str, Any],
+    force_effort: str | None = None,
+    block_types: tuple[str, ...] = NON_TEXT_BLOCK_TYPES,
+) -> tuple[dict[str, Any], int]:
     """Rewrite an Anthropic Messages request body; returns (body, number of changes made).
 
-    Changes are document/image blocks replaced by text, plus one for the effort when
+    Changes are blocks of ``block_types`` (default: document and image) replaced by text, plus one for the effort when
     ``force_effort`` is set and the request's ``output_config.effort`` differs. Claude Code
     sends its main-thread effort on most requests but "high" on some auxiliary and subagent
     calls; a served model whose template rejects "high" would otherwise fail exactly the
@@ -101,7 +112,7 @@ def rewrite_messages_body(body: dict[str, Any], force_effort: str | None = None)
     new_messages = []
     for message in messages:
         if isinstance(message, dict):
-            content, count = rewrite_content(message.get("content"))
+            content, count = rewrite_content(message.get("content"), block_types)
             changed += count
             new_messages.append({**message, "content": content} if count else message)
         else:
@@ -125,12 +136,17 @@ class TextOnlyShim:
         host: str = "127.0.0.1",
         debug: bool = False,
         force_effort: str | None = None,
+        block_types: tuple[str, ...] | list[str] = NON_TEXT_BLOCK_TYPES,
     ) -> None:
+        unknown = [t for t in block_types if t not in NON_TEXT_BLOCK_TYPES]
+        if unknown:
+            raise ValueError(f"text-only shim block types must be among {NON_TEXT_BLOCK_TYPES}, got {unknown}")
         self.upstream_root = upstream_root.rstrip("/")
         self.port = port
         self.host = host
         self.debug = debug
         self.force_effort = force_effort
+        self.block_types = tuple(block_types)
         self._runner: web.AppRunner | None = None
         self._lock = asyncio.Lock()
 
@@ -150,7 +166,11 @@ class TextOnlyShim:
             site = web.TCPSite(runner, self.host, self.port, reuse_port=True)
             await site.start()
             self._runner = runner
-            print(f"Text-only shim listening on {self.base_url}, upstream {self.upstream_root}", file=sys.stderr)
+            print(
+                f"Text-only shim listening on {self.base_url}, upstream {self.upstream_root}, "
+                f"rewriting {', '.join(self.block_types)} blocks",
+                file=sys.stderr,
+            )
 
     async def stop(self) -> None:
         if self._runner is not None:
@@ -165,7 +185,9 @@ class TextOnlyShim:
             except json.JSONDecodeError:
                 parsed = None
             if isinstance(parsed, dict):
-                rewritten, changed = rewrite_messages_body(parsed, force_effort=self.force_effort)
+                rewritten, changed = rewrite_messages_body(
+                    parsed, force_effort=self.force_effort, block_types=self.block_types
+                )
                 if changed:
                     body = json.dumps(rewritten).encode()
                     if self.debug:
